@@ -1,5 +1,7 @@
 # Quantum Decision Web Crawler (BS4 + Parallel + Qiskit + Optional GPU)
 
+(Still in Alpha Stage)
+
 This project is a **recursive web crawler** that prioritizes which URL to crawl next using a **quantum-inspired decision pipeline** backed by **Qiskit**. It starts from `seeds.txt` (one URL per line), follows links up to a configurable depth, and runs multiple fetch/parse workers in parallel.
 
 The crawler is designed to be practical (Beautiful Soup 4 + requests) while exploring a “quantum decision” approach to frontier prioritization.
