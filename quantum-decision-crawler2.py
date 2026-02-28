@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 (C)Tsubasa Kato - Inspire Search Corp. 
-Created with help of Perplexity and ChatGPT 5.2 Thinking
+Created with help of Gemini 3.1 Pro, Perplexity and ChatGPT 5.2 Thinking
 Contact: tsubasa@inspiresearch.io for advanced web crawling consultation service and collaboration discussion.
 
 Quantum Decision Crawler — robots/sitemap + Qiskit + parallel + HARD timeouts via curl
