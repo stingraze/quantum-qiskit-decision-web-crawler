@@ -84,3 +84,76 @@ It is computed either by:
 ### 4) Final priority score
 
 The final score used for frontier ordering is:
+
+Where:
+- `same_host_bonus = 1` if candidate host == parent host else `0`
+- `depth_bonus` favors shallower pages (closer to seeds)
+
+---
+
+## Recursive crawling behavior
+
+- Starts at depth 0 from seeds.
+- Every parsed page’s outlinks are normalized and enqueued at `depth + 1`.
+- Crawling continues until:
+  - frontier is empty, or
+  - hard page limit is reached, or
+  - maximum depth is exceeded.
+
+---
+
+## HARD `--max-pages` enforcement
+
+This crawler enforces `--max-pages` as a **hard upper bound on submitted tasks**.
+
+Why this matters: in parallel crawling, if you only stop when “pages completed” reaches max, you can overshoot due to in-flight work. This implementation:
+
+- Reserves a “submission slot” before scheduling a worker
+- Stops submitting new work once slots are exhausted
+- Signals workers to stop early and prevents writing output after the stop event
+
+Result: **you don’t exceed `--max-pages` even with high `--workers`.**
+
+---
+
+## GPU notes (two separate GPU opportunities)
+
+### A) GPU math for the feature state / cohesive transform (CuPy)
+If CuPy is available, the feature-state construction and cohesive 4D transform can run on GPU (CuPy).
+
+Enable with `--gpu-math`.
+
+**Important:** CuPy requires:
+- a working NVIDIA driver (`nvidia-smi`)
+- a CuPy wheel matching your CUDA major version (`cupy-cuda11x`, `cupy-cuda12x`, etc.)
+- CUDA runtime libraries (cuBLAS, etc.) available
+
+### B) Qiskit Aer GPU
+The script **requests** Aer GPU if available, but Aer will only actually use GPU if:
+- you installed an Aer build with GPU support
+- runtime libraries are present
+
+Even with GPU Aer, note that small circuits (like 5 qubits) may not benefit much.
+
+---
+
+## Files
+
+- `test-final.py` — main crawler script
+- `seeds.txt` — seed URLs (one per line)
+- `crawl.jsonl` — output (one JSON object per crawled page)
+
+---
+
+## Installation
+
+### Using `uv` (recommended)
+
+Create a venv and install dependencies:
+
+```bash
+uv venv
+/opt/qiskit-quantum-crawler/.venv/bin/python3 -m ensurepip --upgrade
+uv pip install -U pip
+
+uv pip install requests beautifulsoup4 numpy qiskit qiskit-aer
