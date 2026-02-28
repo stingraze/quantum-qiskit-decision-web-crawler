@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
+(C)Tsubasa Kato - Inspire Search Corp. 
+Created with help of Perplexity and ChatGPT 5.2 Thinking
+Contact: tsubasa@inspiresearch.io for advanced web crawling consultation service and collaboration discussion.
+
 Quantum Decision Crawler — robots/sitemap + Qiskit + parallel + HARD timeouts via curl
 Update: add --dns-timeout (implemented as connect-phase cap because curl has no dedicated DNS-timeout flag).
+
+uv run quantum-decision-crawler2.py \
+  --seeds seeds.txt --max-pages 200 --max-depth 3 --workers 16 \
+  --force-curl \
+  --dns-timeout 3.5 \
+  --total-timeout 10 \
+  --retries 1 --debug
 """
 
 import os
