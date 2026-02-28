@@ -2,6 +2,10 @@
 """
 Quantum Decision Crawler (recursive) — BS4 + parallel + seeds.txt + Qiskit + GPU-compatible scoring.
 
+(C)Tsubasa Kato - Inspire Search Corp.
+- Tested on uv environment on Ubuntu 22.04 and CUDA 13.1
+- Created with help of Perplexity and ChatGPT GPT5.2 Thinking
+
 Key features
 - Starts from seeds.txt (one URL per line)
 - Recursively follows links up to --max-depth
