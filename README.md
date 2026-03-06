@@ -2,6 +2,8 @@
 
 (Still in Alpha Stage)
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/UE0z3WZRcwc" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
 Visit: https://www.inspiresearch.io/en for search related products and more.
 
 Update: 3/6/2026 19:07PM - quantum-decision-crawler3.py is the latest version. It has algorithm comparing benchmark mode.
