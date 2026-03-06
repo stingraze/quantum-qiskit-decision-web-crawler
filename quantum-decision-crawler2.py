@@ -15,6 +15,7 @@ uv run quantum-decision-crawler2.py \
   --retries 1 --debug
 """
 
+import csv
 import os
 import re
 import json
@@ -25,6 +26,7 @@ import random
 import logging
 import threading
 import subprocess
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, urldefrag
@@ -1113,6 +1115,395 @@ class QuantumCrawler:
         logger.info("Output written to: %s", self.out_jsonl)
 
 
+# ----------------------------
+# Single-threaded comparable crawler (for --compare-algorithms mode)
+# ----------------------------
+_COMPARE_ALGORITHMS = ("quantum", "dfs", "bfs")
+# Placeholder priority used for DFS/BFS candidates; the actual traversal order
+# for these strategies is determined solely by the frontier data structure (LIFO
+# stack / FIFO queue), so the numeric value has no effect on ordering.
+_DEFAULT_NON_QUANTUM_PRIORITY = 0.5
+
+
+class _SingleThreadComparableCrawler(QuantumCrawler):
+    """
+    Single-threaded variant of QuantumCrawler used exclusively for comparison mode.
+
+    Overrides frontier management to support quantum (priority queue), dfs (LIFO
+    stack), and bfs (FIFO queue) traversal strategies.  Instead of writing JSONL
+    records to disk, it accumulates them in ``_cmp_records`` so the comparison
+    runner can write unified CSV/JSON output.
+    """
+
+    def __init__(self, algorithm: str, **kwargs):
+        if algorithm not in _COMPARE_ALGORITHMS:
+            raise ValueError(f"Unknown algorithm {algorithm!r}; expected one of {_COMPARE_ALGORITHMS}")
+        # Force single-threaded (run_timed never uses ThreadPoolExecutor)
+        kwargs["max_workers"] = 1
+        super().__init__(**kwargs)
+        self.algorithm = algorithm
+        # Alternative frontier data structures (used only by dfs/bfs)
+        self._dfs_stack: List[FrontierItem] = []
+        self._bfs_deque: deque = deque()
+        # Per-run record collection
+        self._cmp_records: List[dict] = []
+        self._cmp_step: int = 0
+
+    # ---- Frontier management overrides ----
+
+    def _push_frontier(self, item: FrontierItem):
+        if self.algorithm == "dfs":
+            with self._frontier_lock:
+                self._dfs_stack.append(item)
+        elif self.algorithm == "bfs":
+            with self._frontier_lock:
+                self._bfs_deque.append(item)
+        else:
+            super()._push_frontier(item)
+
+    def _pop_frontier(self) -> Optional[FrontierItem]:
+        if self.algorithm == "dfs":
+            with self._frontier_lock:
+                return self._dfs_stack.pop() if self._dfs_stack else None
+        elif self.algorithm == "bfs":
+            with self._frontier_lock:
+                return self._bfs_deque.popleft() if self._bfs_deque else None
+        else:
+            return super()._pop_frontier()
+
+    def _frontier_size(self) -> int:
+        if self.algorithm == "dfs":
+            with self._frontier_lock:
+                return len(self._dfs_stack)
+        elif self.algorithm == "bfs":
+            with self._frontier_lock:
+                return len(self._bfs_deque)
+        else:
+            return super()._frontier_size()
+
+    # ---- Collect records in memory instead of writing to disk ----
+
+    def _write_jsonl(self, obj: dict):
+        """Intercept record writes: tag with algorithm/step and store in memory."""
+        obj["algorithm"] = self.algorithm
+        obj["step"] = self._cmp_step
+        self._cmp_step += 1
+        self._cmp_records.append(obj)
+
+    # ---- Override _crawl_one for all modes ----
+    # Adds discovered_from/priority_score fields and skips expensive quantum
+    # scoring for dfs/bfs strategies.
+
+    def _crawl_one(self, item: FrontierItem) -> Tuple[FrontierItem, int, int]:
+        if self._stop_event.is_set():
+            return item, 0, 0
+
+        url = item.url
+        if item.depth > self.max_depth:
+            return item, 0, 0
+        if not self._allowed_by_regex(url):
+            return item, 0, 0
+
+        priority_score: Optional[float] = item.priority if self.algorithm == "quantum" else None
+
+        if self.respect_robots and not self._robots_allows(url):
+            self._write_jsonl({
+                "url": url, "final_url": None, "depth": item.depth,
+                "status": "skip", "reason": "robots_disallow",
+                "http_status": 0, "content_type": None, "fetch_seconds": 0.0,
+                "fetch_engine": None, "ts": time.time(),
+                "discovered_from": item.discovered_from,
+                "priority_score": priority_score,
+            })
+            return item, 0, 0
+
+        self._discover_and_seed_sitemaps_for_host(url)
+
+        html, ct, final_url, status, fetch_s, reason, engine = self._fetch(url)
+        if not html or not final_url:
+            self._write_jsonl({
+                "url": url, "final_url": final_url, "depth": item.depth,
+                "status": "skip", "reason": reason,
+                "http_status": status, "content_type": ct,
+                "fetch_seconds": fetch_s, "fetch_engine": engine,
+                "ts": time.time(),
+                "discovered_from": item.discovered_from,
+                "priority_score": priority_score,
+            })
+            return item, 0, 0
+
+        title, snippet, links = self._parse(html, final_url)
+        found_links = len(links)
+        enqueued = 0
+
+        next_depth = item.depth + 1
+        if next_depth <= self.max_depth:
+            for out_url, anchor in links:
+                if not self._allowed_by_regex(out_url):
+                    continue
+                if self.respect_robots and not self._robots_allows(out_url):
+                    continue
+                if self._is_visited(out_url):
+                    continue
+                if not self._mark_seen(out_url):
+                    continue
+                if self.algorithm == "quantum":
+                    child_priority = self._score_candidate(
+                        out_url, anchor, final_url, item.depth, title
+                    )
+                else:
+                    # DFS/BFS: skip quantum scoring; traversal order is determined
+                    # entirely by the frontier data structure, not by a priority.
+                    child_priority = _DEFAULT_NON_QUANTUM_PRIORITY
+                self._push_frontier(
+                    FrontierItem(
+                        priority=child_priority,
+                        url=out_url,
+                        depth=next_depth,
+                        discovered_from=final_url,
+                    )
+                )
+                enqueued += 1
+
+        self._write_jsonl({
+            "url": url, "final_url": final_url, "depth": item.depth,
+            "status": "ok", "reason": reason,
+            "http_status": status, "content_type": ct,
+            "fetch_seconds": fetch_s, "fetch_engine": engine,
+            "title": title, "snippet": snippet,
+            "out_links_found": found_links, "out_links_enqueued": enqueued,
+            "ts": time.time(),
+            "discovered_from": item.discovered_from,
+            "priority_score": priority_score,
+        })
+
+        if self.debug:
+            logger.info(
+                "[%s] depth=%d found_links=%d enqueued=%d engine=%s url=%s",
+                self.algorithm.upper(), item.depth, found_links, enqueued, engine, final_url,
+            )
+
+        if self.algorithm == "quantum":
+            self.cohesive.adapt_matrix(performance_threshold=0.8, window=200)
+
+        return item, found_links, enqueued
+
+    # ---- Time-bounded single-threaded run ----
+
+    def run_timed(self, seeds: List[str], duration_s: float) -> List[dict]:
+        """
+        Single-threaded time-bounded crawl.
+
+        Seeds the frontier from *seeds*, then crawls pages one at a time until
+        *duration_s* seconds have elapsed or the frontier is empty.  Returns the
+        list of per-step records collected during this run.
+        """
+        deadline = time.time() + duration_s
+        logger.info(
+            "[COMPARE] Starting algorithm=%s duration=%.0fs", self.algorithm, duration_s
+        )
+
+        # Reset per-run record state (allow the same instance to be reused)
+        self._cmp_records = []
+        self._cmp_step = 0
+
+        seeded = 0
+        for s in seeds:
+            if not self._allowed_by_regex(s):
+                continue
+            if self.respect_robots and not self._robots_allows(s):
+                continue
+            if self._mark_seen(s):
+                self._push_frontier(
+                    FrontierItem(priority=1.0, url=s, depth=0, discovered_from="seed")
+                )
+                seeded += 1
+
+        if seeded == 0:
+            logger.warning("[COMPARE] No usable seeds for algorithm=%s", self.algorithm)
+            return self._cmp_records
+
+        logger.info("[COMPARE] Seeded %d URL(s) for algorithm=%s", seeded, self.algorithm)
+
+        pages = 0
+        while time.time() < deadline:
+            item = self._pop_frontier()
+            if item is None:
+                logger.info(
+                    "[COMPARE] Frontier empty for algorithm=%s after %d page(s)",
+                    self.algorithm, pages,
+                )
+                break
+            if not self._mark_visited(item.url):
+                continue
+            logger.debug(
+                "[COMPARE] %s step=%d depth=%d url=%s (from=%s)",
+                self.algorithm, self._cmp_step, item.depth, item.url, item.discovered_from,
+            )
+            self._crawl_one(item)
+            pages += 1
+            if pages % 10 == 0:
+                remaining = max(0.0, deadline - time.time())
+                logger.info(
+                    "[COMPARE] %s: pages=%d frontier=%d remaining=%.1fs",
+                    self.algorithm, pages, self._frontier_size(), remaining,
+                )
+
+        elapsed = duration_s - max(0.0, deadline - time.time())
+        logger.info(
+            "[COMPARE] Done. algorithm=%s pages=%d records=%d elapsed=%.1fs",
+            self.algorithm, pages, len(self._cmp_records), elapsed,
+        )
+        return self._cmp_records
+
+
+# ----------------------------
+# Comparison-mode orchestrator
+# ----------------------------
+
+_CSV_FIELDS = [
+    "algorithm",
+    "step",
+    "timestamp",
+    "source_url",
+    "visited_url",
+    "final_url",
+    "depth",
+    "fetch_outcome",
+    "fetch_reason",
+    "http_status",
+    "content_type",
+    "fetch_duration_s",
+    "links_found",
+    "links_enqueued",
+    "priority_score",
+    "title",
+]
+
+
+def _record_to_csv_row(r: dict) -> dict:
+    """Map an internal record dict to the flat CSV row format."""
+    return {
+        "algorithm": r.get("algorithm", ""),
+        "step": r.get("step", ""),
+        "timestamp": r.get("ts", ""),
+        "source_url": r.get("discovered_from", ""),
+        "visited_url": r.get("url", ""),
+        "final_url": r.get("final_url", "") or "",
+        "depth": r.get("depth", ""),
+        "fetch_outcome": r.get("status", ""),
+        "fetch_reason": r.get("reason", ""),
+        "http_status": r.get("http_status", ""),
+        "content_type": r.get("content_type", "") or "",
+        "fetch_duration_s": r.get("fetch_seconds", ""),
+        "links_found": r.get("out_links_found", ""),
+        "links_enqueued": r.get("out_links_enqueued", ""),
+        "priority_score": (lambda ps: "" if ps is None else ps)(r.get("priority_score")),
+        "title": r.get("title", "") or "",
+    }
+
+
+def run_comparison_mode(
+    seeds: List[str],
+    duration_per_algo_s: float,
+    out_csv: str,
+    out_json: str,
+    crawler_kwargs: dict,
+) -> None:
+    """
+    Orchestrate a three-way quantum / DFS / BFS comparison.
+
+    Runs each algorithm sequentially for *duration_per_algo_s* seconds, starting
+    from the same *seeds* list.  After all three runs writes:
+
+    * *out_csv* — one row per URL visit attempt across all three algorithms.
+    * *out_json* — full records plus a per-algorithm aggregate summary.
+    """
+    run_start_ts = time.time()
+    all_records: List[dict] = []
+    summaries: Dict[str, dict] = {}
+
+    for algo in _COMPARE_ALGORITHMS:
+        logger.info(
+            "[COMPARE] === Starting %s crawl (%.0f seconds) ===", algo, duration_per_algo_s
+        )
+        crawler = _SingleThreadComparableCrawler(algorithm=algo, **crawler_kwargs)
+        records = crawler.run_timed(seeds, duration_per_algo_s)
+        all_records.extend(records)
+
+        visited_recs = [r for r in records if r.get("status") == "ok"]
+        skipped_recs = [r for r in records if r.get("status") == "skip"]
+        fetch_times = [
+            r["fetch_seconds"] for r in visited_recs if "fetch_seconds" in r
+        ]
+        priority_scores = [
+            r["priority_score"] for r in visited_recs
+            if r.get("priority_score") is not None
+        ]
+        depths = [r.get("depth", 0) for r in visited_recs]
+
+        summaries[algo] = {
+            "algorithm": algo,
+            "total_records": len(records),
+            "pages_visited": len(visited_recs),
+            "pages_skipped": len(skipped_recs),
+            "avg_fetch_seconds": float(np.mean(fetch_times)) if fetch_times else 0.0,
+            "max_fetch_seconds": float(max(fetch_times)) if fetch_times else 0.0,
+            "total_links_found": sum(r.get("out_links_found", 0) for r in visited_recs),
+            "total_links_enqueued": sum(r.get("out_links_enqueued", 0) for r in visited_recs),
+            "unique_depths_reached": sorted(set(depths)),
+            "max_depth_reached": max(depths) if depths else 0,
+            "avg_priority_score": float(np.mean(priority_scores)) if priority_scores else None,
+        }
+
+        logger.info("[COMPARE] %s summary: %s", algo, json.dumps(summaries[algo]))
+
+    # ---- Write CSV ----
+    if all_records:
+        with open(out_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            for r in all_records:
+                writer.writerow(_record_to_csv_row(r))
+        logger.info("[COMPARE] CSV written to: %s (%d rows)", out_csv, len(all_records))
+
+    # ---- Write JSON ----
+    output = {
+        "comparison_run": {
+            "run_start_timestamp": run_start_ts,
+            "run_end_timestamp": time.time(),
+            "duration_per_algo_s": duration_per_algo_s,
+            "algorithms_run": list(_COMPARE_ALGORITHMS),
+            "seeds": seeds,
+        },
+        "summaries": summaries,
+        "records": all_records,
+    }
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+    logger.info("[COMPARE] JSON written to: %s", out_json)
+
+    # ---- Human-readable summary table ----
+    logger.info("[COMPARE] === Final Comparison Summary ===")
+    header = (
+        f"{'Algorithm':<10} {'Visited':>8} {'Skipped':>8} "
+        f"{'AvgFetch':>10} {'LinksFound':>12} {'MaxDepth':>10}"
+    )
+    logger.info("[COMPARE] %s", header)
+    logger.info("[COMPARE] %s", "-" * len(header))
+    for algo in _COMPARE_ALGORITHMS:
+        s = summaries[algo]
+        logger.info(
+            "[COMPARE] %-10s %8d %8d %10.2fs %12d %10d",
+            algo,
+            s["pages_visited"],
+            s["pages_skipped"],
+            s["avg_fetch_seconds"],
+            s["total_links_found"],
+            s["max_depth_reached"],
+        )
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -1146,6 +1537,29 @@ if __name__ == "__main__":
     p.add_argument("--backoff", type=float, default=0.6)
     p.add_argument("--force-curl", action="store_true", help="Always use curl engine.")
 
+    # ---- Comparison-mode flags ----
+    p.add_argument(
+        "--compare-algorithms", action="store_true",
+        help=(
+            "Run quantum, DFS, and BFS crawling strategies sequentially from the "
+            "same seeds.txt input and produce unified CSV/JSON comparison artifacts. "
+            "Each strategy runs for --compare-duration seconds (default 180 s = 3 min), "
+            "giving a total intended runtime of 3 × --compare-duration."
+        ),
+    )
+    p.add_argument(
+        "--compare-duration", type=float, default=180.0,
+        help="Wall-clock seconds allocated to each algorithm in comparison mode (default: 180 = 3 minutes).",
+    )
+    p.add_argument(
+        "--compare-csv", default="comparison.csv",
+        help="Output CSV file for comparison mode (default: comparison.csv).",
+    )
+    p.add_argument(
+        "--compare-json", default="comparison.json",
+        help="Output JSON file for comparison mode (default: comparison.json).",
+    )
+
     args = p.parse_args()
 
     respect_robots = True
@@ -1160,7 +1574,8 @@ if __name__ == "__main__":
     elif args.use_sitemaps:
         use_sitemaps = True
 
-    crawler = QuantumCrawler(
+    # Shared kwargs used by both normal and comparison modes
+    _crawler_kwargs = dict(
         seeds_path=args.seeds,
         out_jsonl=args.out,
         max_pages=args.max_pages,
@@ -1186,4 +1601,16 @@ if __name__ == "__main__":
         force_curl=args.force_curl,
         dns_timeout=args.dns_timeout,
     )
-    crawler.run()
+
+    if args.compare_algorithms:
+        seeds = load_seeds(args.seeds)
+        run_comparison_mode(
+            seeds=seeds,
+            duration_per_algo_s=args.compare_duration,
+            out_csv=args.compare_csv,
+            out_json=args.compare_json,
+            crawler_kwargs=_crawler_kwargs,
+        )
+    else:
+        crawler = QuantumCrawler(**_crawler_kwargs)
+        crawler.run()
