@@ -4,7 +4,7 @@
 
 Visit: https://www.inspiresearch.io/en for search related products and more.
 
-Update: 2/28/2026 18:00PM - quantum-decision-crawler2.py is the latest version. It has more options.
+Update: 3/6/2026 19:07PM - quantum-decision-crawler3.py is the latest version. It has algorithm comparing benchmark mode.
 
 This project is a **recursive web crawler** that prioritizes which URL to crawl next using a **quantum-inspired decision pipeline** backed by **Qiskit**. It starts from `seeds.txt` (one URL per line), follows links up to a configurable depth, and runs multiple fetch/parse workers in parallel.
 
