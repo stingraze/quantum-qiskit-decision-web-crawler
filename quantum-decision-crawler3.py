@@ -906,7 +906,20 @@ class QuantumCrawler:
         if len(html) > MAX_HTML_SIZE:
             html = html[:MAX_HTML_SIZE]
 
-        soup = BeautifulSoup(html, "html.parser")
+        # Use a try-except block to prevent malformed HTML from crashing the crawler
+        try:
+            # Try lxml first if installed (much more robust for wild web crawling)
+            soup = BeautifulSoup(html, "lxml")
+        except Exception:
+            try:
+                # Fallback to the built-in html.parser
+                soup = BeautifulSoup(html, "html.parser")
+            except Exception as e:
+                if self.debug:
+                    logger.debug("[PARSE_ERROR] Skipping unparseable markup at %s: %s", base_url, e)
+                # Return empty structures so the crawler continues safely
+                return "", "", []
+
         title = (soup.title.string.strip() if soup.title and soup.title.string else "")
         text = soup.get_text(" ", strip=True)
         snippet = text[:4000]
