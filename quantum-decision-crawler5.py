@@ -5,6 +5,7 @@ Created with help of Gemini 3.1 Pro, Perplexity and ChatGPT 5.2 Thinking
 Contact: tsubasa@inspiresearch.io for advanced web crawling consultation service and collaboration discussion.
 
 Quantum Decision Crawler v5 -- adaptive quantum annealing with content relevance scoring.
+Needs further testing. Please use with your own responsibility.
 
 Extends quantum-decision-crawler4.py with AdaptiveQuantumCrawler that adds:
   - Quantum annealing schedule: exploration temperature decays from high (broad
