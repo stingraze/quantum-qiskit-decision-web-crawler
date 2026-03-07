@@ -495,6 +495,7 @@ class QuantumCrawler:
     ):
         self.seeds_path = seeds_path
         self.out_jsonl = out_jsonl
+        self.out_all_urls = "all-urls.txt"
         self.max_pages = int(max_pages)
 
         self.max_depth = max(1, int(max_depth))
@@ -542,6 +543,7 @@ class QuantumCrawler:
         self._pages_lock = threading.Lock()
 
         self._out_lock = threading.Lock()
+        self._urls_lock = threading.Lock()
 
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": self.user_agent})
@@ -1030,6 +1032,15 @@ class QuantumCrawler:
             with open(self.out_jsonl, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
+    def _write_all_urls(self, urls: List[str]):
+        """Append discovered URLs to all-urls.txt in a thread-safe manner."""
+        if not urls:
+            return
+        with self._urls_lock:
+            with open(self.out_all_urls, "a", encoding="utf-8") as f:
+                for u in urls:
+                    f.write(u + "\n")
+
     def _crawl_one(self, item: FrontierItem) -> Tuple[FrontierItem, int, int]:
         if self._stop_event.is_set():
             return item, 0, 0
@@ -1063,6 +1074,7 @@ class QuantumCrawler:
             return item, 0, 0
 
         title, snippet, links = self._parse(html, final_url)
+        self._write_all_urls([u for u, _ in links])
         found_links = len(links)
         enqueued = 0
 
@@ -1100,6 +1112,9 @@ class QuantumCrawler:
     def run(self):
         with self._out_lock:
             with open(self.out_jsonl, "w", encoding="utf-8") as f:
+                f.write("")
+        with self._urls_lock:
+            with open(self.out_all_urls, "w", encoding="utf-8") as f:
                 f.write("")
 
         seeds = load_seeds(self.seeds_path)
@@ -1619,6 +1634,7 @@ class HybridQuantumCrawler(QuantumCrawler):
             return item, 0, 0
 
         title, snippet, links = self._parse(html, final_url)
+        self._write_all_urls([u for u, _ in links])
         found_links = len(links)
         enqueued = 0
 
@@ -2023,6 +2039,7 @@ class AdaptiveQuantumCrawler(HybridQuantumCrawler):
             return item, 0, 0
 
         title, snippet, links = self._parse(html, final_url)
+        self._write_all_urls([u for u, _ in links])
         found_links = len(links)
         enqueued = 0
 
@@ -2229,6 +2246,7 @@ class _SingleThreadComparableCrawler(QuantumCrawler):
             return item, 0, 0
 
         title, snippet, links = self._parse(html, final_url)
+        self._write_all_urls([u for u, _ in links])
         found_links = len(links)
         enqueued = 0
 
