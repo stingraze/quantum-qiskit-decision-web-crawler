@@ -137,14 +137,24 @@ It is computed either by:
 
 ### 4) Heuristic score in v4
 
-`quantum-decision-crawler4.py` adds a deterministic heuristic scorer that prefers:
+`quantum-decision-crawler4.py` adds a deterministic heuristic scorer that strongly
+prefers high-value destinations by combining:
 
-- same-host links
-- shorter, more canonical-looking URLs
-- useful anchor keywords
-- informative anchor text length
-- shallower depth
-- parent pages with meaningful titles
+- **Same-host preference** – same-host links tend to be more topically relevant
+- **URL brevity** – shorter, more canonical-looking URLs score higher
+- **Anchor keyword matching** – an expanded keyword list covering:
+  - documentation / specifications: `docs`, `api`, `reference`, `spec`, `guide`, `tutorial`, `handbook`, …
+  - research / academia: `research`, `paper`, `whitepaper`, `report`, `publication`, …
+  - product / company: `about`, `company`, `team`, `contact`, `careers`, `pricing`, `platform`, …
+  - community / learning: `blog`, `news`, `learn`, `resources`, `developers`, `community`, `support`, …
+  - navigation hubs: `overview`, `features`, `solutions`, `changelog`, `releases`, …
+- **URL path keyword matching** – URL path segments are checked against the same
+  high-value set (e.g. `/docs/`, `/about/`, `/research/`, `/api/` all receive a boost)
+- **Low-value URL penalty** – URLs containing tokens like `signout`, `logout`, `cart`,
+  `checkout`, `privacy-policy`, `terms-of-service`, `cookie-policy`, `share`, etc.
+  are multiplied by `0.25` so they sink to the bottom of the priority queue without
+  being completely eliminated
+- **Depth and title** signals for shallower, more content-rich pages
 
 ### 5) Exploration score in v4
 
@@ -195,6 +205,20 @@ When `--compare-algorithms` is enabled, the script runs each strategy for `--com
 
 - `comparison.csv`
 - `comparison.json`
+
+The `quantum` strategy in comparison mode now uses the **full hybrid scoring pipeline**
+(`_hybrid_score_candidate`: quantum circuit + heuristic + exploration noise), so it
+makes meaningfully different priority decisions from BFS/DFS rather than collapsing
+to near-BFS behaviour when quantum circuit outputs cluster around 0.5.
+
+The summary table logged at the end of a comparison run now includes
+**AvgPriority / MinPriority / MaxPriority** columns for each algorithm.  For `quantum`,
+you should see a spread of scores (reflecting varied link quality); for `dfs` and `bfs`
+these will be `N/A` since those strategies use a constant priority.
+
+All `--quantum-weight`, `--heuristic-weight`, `--exploration-weight`, and
+`--exploration-temperature` flags are respected in comparison mode so you can tune
+the quantum prioritization behavior consistently across both normal and comparison runs.
 
 This makes it easier to benchmark crawl behavior across strategies from the same seed set.
 
