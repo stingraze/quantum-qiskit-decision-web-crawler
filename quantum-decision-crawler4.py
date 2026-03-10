@@ -1311,6 +1311,52 @@ class HybridQuantumCrawler(QuantumCrawler):
     # Hybrid scoring helpers
     # ------------------------------------------------------------------
 
+    # Anchor/title keywords that signal a high-value crawl target.
+    _ANCHOR_KEYWORD_HINTS: frozenset = frozenset((
+        # Documentation / specifications
+        "docs", "documentation", "api", "reference", "spec", "specifications",
+        "guide", "guides", "tutorial", "tutorials", "manual", "handbook",
+        # Research / academia
+        "research", "paper", "papers", "publication", "publications",
+        "whitepaper", "whitepapers", "report", "reports",
+        # Products / company info
+        "about", "company", "team", "contact", "careers", "jobs",
+        "product", "products", "platform", "pricing", "enterprise",
+        # Community / learning
+        "blog", "news", "article", "articles", "press", "learn", "learning",
+        "resources", "examples", "quickstart", "getting-started",
+        "developers", "developer", "community", "forum", "support",
+        # Navigation hubs
+        "overview", "intro", "introduction", "features", "solutions",
+        "changelog", "release", "releases",
+    ))
+
+    # URL path segments that typically lead to high-value destinations.
+    _IMPORTANT_PATH_SEGS: frozenset = frozenset((
+        "docs", "documentation", "doc", "api", "apis", "reference", "ref",
+        "spec", "specifications", "specs",
+        "research", "papers", "publications", "whitepaper", "whitepapers",
+        "about", "company", "team", "contact", "careers", "jobs",
+        "blog", "news", "articles", "press", "media",
+        "learn", "learning", "tutorial", "tutorials", "guide", "guides",
+        "product", "products", "platform", "pricing", "enterprise",
+        "developers", "developer", "dev", "community", "forum", "support",
+        "resources", "examples", "handbook", "manual",
+        "overview", "features", "solutions", "use-cases",
+    ))
+
+    # URL path tokens that flag low-value crawl targets.  Matches are applied
+    # against the lowercase URL path (not the full URL so query strings don't
+    # accidentally trigger this).
+    _LOW_VALUE_PATH_TOKENS: frozenset = frozenset((
+        "signout", "sign-out", "sign_out", "logout", "log-out", "log_out",
+        "cart", "checkout", "basket", "add-to-cart",
+        "privacy-policy", "terms-of-service", "terms-and-conditions",
+        "cookie-policy", "legal", "dmca",
+        "share", "tweet", "facebook", "pinterest",
+        "print", "unsubscribe",
+    ))
+
     def _heuristic_score(
         self,
         candidate_url: str,
@@ -1321,21 +1367,26 @@ class HybridQuantumCrawler(QuantumCrawler):
     ) -> float:
         """Deterministic heuristic score using URL and anchor features.
 
-        Combines same-host preference, URL length, anchor keyword hints,
-        depth penalty, and title length into a single [0, 1] value.  This
-        component is cheap (no quantum circuit evaluation) and provides stable
-        directional guidance independent of stochastic signals.
+        Combines same-host preference, URL brevity, anchor keyword hints,
+        URL path keyword hints, depth penalty, and title length into a
+        single [0, 1] value.  Low-value URLs (signout, cart, legal-only
+        pages, social-share links, etc.) receive a heavy penalty so the
+        crawler naturally avoids them.
 
-        Component weights:
-            same-host score    0.30
-            URL brevity score  0.20
-            anchor keyword     0.15
-            anchor length      0.10
-            depth score        0.15
-            title length       0.10
+        Component weights (before low-value penalty):
+            same-host score      0.20
+            URL brevity          0.10
+            anchor keyword       0.20   (expanded keyword list)
+            URL path keyword     0.20   (NEW: path segment matching)
+            anchor length        0.05
+            depth score          0.15
+            title length         0.10
+        Low-value multiplier:  0.25 × base score when a low-value token
+            is found in the URL path.
         """
         at = (anchor_text or "").strip()
         title = (parent_title or "").strip()
+        at_lower = at.lower()
 
         # Same-host links tend to be more topically relevant.
         same_host_score = 1.0 if host_of(candidate_url) == host_of(parent_url) else 0.4
@@ -1344,12 +1395,18 @@ class HybridQuantumCrawler(QuantumCrawler):
         url_score = max(0.0, 1.0 - min(1.0, len(candidate_url) / 200.0))
 
         # Anchor text keywords strongly suggest a valuable target.
-        KEYWORD_HINTS = (
-            "research", "paper", "docs", "api", "about", "guide",
-            "learn", "tutorial", "article", "spec", "reference",
-        )
-        anchor_keyword = 1.0 if any(k in at.lower() for k in KEYWORD_HINTS) else 0.0
+        anchor_keyword = 1.0 if any(k in at_lower for k in self._ANCHOR_KEYWORD_HINTS) else 0.0
         anchor_len_score = min(1.0, len(at) / 60.0) if at else 0.0
+
+        # URL path segment scoring: split path and look for important segments.
+        # urlparse is robust against malformed input and rarely raises, but we
+        # guard with AttributeError in case of unexpected None returns.
+        try:
+            url_path = urlparse(candidate_url).path.lower().strip("/")
+        except AttributeError:
+            url_path = ""
+        path_segments = set(url_path.split("/")) if url_path else set()
+        path_keyword = 1.0 if path_segments & self._IMPORTANT_PATH_SEGS else 0.0
 
         # Prefer shallower pages (closer to seed distance).
         depth_score = 1.0 - float(parent_depth) / max(1.0, float(self.max_depth))
@@ -1357,15 +1414,23 @@ class HybridQuantumCrawler(QuantumCrawler):
         # Non-empty titles typically indicate richer content pages.
         title_score = min(1.0, len(title) / 80.0) if title else 0.0
 
-        score = (
-            0.30 * same_host_score
-            + 0.20 * url_score
-            + 0.15 * anchor_keyword
-            + 0.10 * anchor_len_score
+        # Low-value URL detection: check path for undesirable tokens.
+        is_low_value = any(t in url_path for t in self._LOW_VALUE_PATH_TOKENS)
+
+        base_score = (
+            0.20 * same_host_score
+            + 0.10 * url_score
+            + 0.20 * anchor_keyword
+            + 0.20 * path_keyword
+            + 0.05 * anchor_len_score
             + 0.15 * depth_score
             + 0.10 * title_score
         )
-        return max(0.0, min(1.0, score))
+        # Apply a heavy penalty for low-value targets so they sink to the
+        # bottom of the priority queue without being completely eliminated.
+        if is_low_value:
+            base_score *= 0.25
+        return max(0.0, min(1.0, base_score))
 
     def _exploration_noise(self, candidate_url: str) -> float:
         """Controlled stochastic noise scaled by exploration_temperature.
@@ -1692,13 +1757,18 @@ _COMPARE_ALGORITHMS = ("quantum", "dfs", "bfs")
 _DEFAULT_NON_QUANTUM_PRIORITY = 0.5
 
 
-class _SingleThreadComparableCrawler(QuantumCrawler):
+class _SingleThreadComparableCrawler(HybridQuantumCrawler):
     """Single-threaded variant used exclusively for --compare-algorithms mode.
 
     Overrides frontier management to support quantum (priority queue), dfs (LIFO
     stack), and bfs (FIFO queue) traversal strategies.  Instead of writing JSONL
     records to disk, it accumulates them in _cmp_records so the comparison runner
     can write unified CSV/JSON output.
+
+    Inherits from HybridQuantumCrawler so that the quantum mode uses the full
+    hybrid scoring pipeline (_hybrid_score_candidate: quantum + heuristic +
+    exploration noise) rather than the bare quantum signal from the base class.
+    This ensures quantum ordering is meaningfully different from BFS/DFS.
     """
 
     def __init__(self, algorithm: str, **kwargs):
@@ -1803,7 +1873,10 @@ class _SingleThreadComparableCrawler(QuantumCrawler):
                 if not self._mark_seen(out_url):
                     continue
                 if self.algorithm == "quantum":
-                    child_priority = self._score_candidate(
+                    # Use the full hybrid scorer so quantum mode makes
+                    # meaningfully differentiated priority decisions rather
+                    # than collapsing to near-BFS behaviour from weak signals.
+                    child_priority = self._hybrid_score_candidate(
                         out_url, anchor, final_url, item.depth, title
                     )
                 else:
@@ -1987,6 +2060,8 @@ def run_comparison_mode(
             "unique_depths_reached": sorted(set(depths)),
             "max_depth_reached": max(depths) if depths else 0,
             "avg_priority_score": float(np.mean(priority_scores)) if priority_scores else None,
+            "min_priority_score": float(min(priority_scores)) if priority_scores else None,
+            "max_priority_score": float(max(priority_scores)) if priority_scores else None,
         }
 
         logger.info("[COMPARE] %s summary: %s", algo, json.dumps(summaries[algo]))
@@ -2020,20 +2095,30 @@ def run_comparison_mode(
     logger.info("[COMPARE] === Final Comparison Summary ===")
     header = (
         f"{'Algorithm':<10} {'Visited':>8} {'Skipped':>8} "
-        f"{'AvgFetch':>10} {'LinksFound':>12} {'MaxDepth':>10}"
+        f"{'AvgFetch':>10} {'LinksFound':>12} {'MaxDepth':>10} "
+        f"{'AvgPriority':>13} {'MinPriority':>13} {'MaxPriority':>13}"
     )
     logger.info("[COMPARE] %s", header)
     logger.info("[COMPARE] %s", "-" * len(header))
     for algo in _COMPARE_ALGORITHMS:
         s = summaries[algo]
+        avg_p = s.get("avg_priority_score")
+        min_p = s.get("min_priority_score")
+        max_p = s.get("max_priority_score")
+        avg_p_str = f"{avg_p:>13.4f}" if avg_p is not None else f"{'N/A':>13}"
+        min_p_str = f"{min_p:>13.4f}" if min_p is not None else f"{'N/A':>13}"
+        max_p_str = f"{max_p:>13.4f}" if max_p is not None else f"{'N/A':>13}"
         logger.info(
-            "[COMPARE] %-10s %8d %8d %10.2fs %12d %10d",
+            "[COMPARE] %-10s %8d %8d %10.2fs %12d %10d %13s %13s %13s",
             algo,
             s["pages_visited"],
             s["pages_skipped"],
             s["avg_fetch_seconds"],
             s["total_links_found"],
             s["max_depth_reached"],
+            avg_p_str,
+            min_p_str,
+            max_p_str,
         )
 
 
@@ -2220,12 +2305,25 @@ if __name__ == "__main__":
 
     if args.compare_algorithms:
         seeds = load_seeds(args.seeds)
+        # Merge hybrid scoring parameters so the quantum algorithm in
+        # comparison mode benefits from the same tuned weights used in
+        # normal HybridQuantumCrawler mode.
+        _compare_kwargs = dict(
+            **_crawler_kwargs,
+            quantum_weight=args.quantum_weight,
+            heuristic_weight=args.heuristic_weight,
+            exploration_weight=args.exploration_weight,
+            exploration_temperature=args.exploration_temperature,
+            dead_end_link_threshold=args.dead_end_threshold,
+            backtrack_boost=args.backtrack_boost,
+            dead_ends_before_boost=args.dead_ends_before_boost,
+        )
         run_comparison_mode(
             seeds=seeds,
             duration_per_algo_s=args.compare_duration,
             out_csv=args.compare_csv,
             out_json=args.compare_json,
-            crawler_kwargs=_crawler_kwargs,
+            crawler_kwargs=_compare_kwargs,
         )
     elif args.use_base_crawler:
         # Run without hybrid features -- useful as a v3 baseline comparison.
