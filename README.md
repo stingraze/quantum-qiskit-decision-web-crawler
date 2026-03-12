@@ -12,7 +12,7 @@ https://bsiegelwax.substack.com/p/quantum-web-crawler (3/1/2026)
 
 Visit: https://www.inspiresearch.io/en for search related products and more.
 
-Update: 2026-03-06 - `quantum-decision-crawler4.py` is the latest version.
+Update: 2026-03-10 - `quantum-decision-crawler5.py` is the latest version (experimental). `quantum-decision-crawler4.py` is the latest stable version.
 
 This project is a **recursive web crawler** that prioritizes which URL to crawl next using a **quantum-inspired decision pipeline** backed by **Qiskit**. It starts from `seeds.txt` (one URL per line), follows links up to a configurable depth, and runs multiple fetch/parse workers in parallel.
 
@@ -224,6 +224,78 @@ This makes it easier to benchmark crawl behavior across strategies from the same
 
 ---
 
+## What is new in `quantum-decision-crawler5.py`?
+
+> ⚠️ **Experimental** — v5 needs further testing. Use at your own responsibility.
+
+`quantum-decision-crawler5.py` extends v4 with two major additions: a **quantum-inspired annealing schedule** for the exploration temperature, and a **content relevance signal** as a fourth scoring dimension.
+
+### Four-signal hybrid score
+
+v5 promotes the scoring formula from v4's three signals to four:
+
+```text
+score(url) = quantum_weight    * Q(url)   [quantum gate-based signal]
+           + heuristic_weight  * H(url)   [deterministic feature score]
+           + relevance_weight  * R(url)   [keyword content-relevance]
+           + exploration_weight * E(url)  [annealing-scaled noise]
+```
+
+All four weights are normalised internally to sum to 1.0.
+
+### Quantum annealing schedule
+
+The exploration temperature decays from `--annealing-initial-temp` (default 0.8) to
+`--annealing-final-temp` (default 0.05) as the crawl progresses, following one of three
+schedules selected by `--annealing-schedule`:
+
+| Schedule      | Behaviour |
+|---------------|-----------|
+| `linear`      | T decreases at a constant rate |
+| `cosine`      | T follows a cosine curve (fast drop at start and end, slow in middle) |
+| `exponential` | T drops steeply early on |
+
+This implements a quantum-inspired simulated annealing strategy: the crawler starts with
+high exploration (broad search) and transitions toward exploitation (targeted, high-score
+link following) as pages accumulate.
+
+### Content relevance signal
+
+`--relevance-keywords` accepts a comma-separated list of keywords. For each candidate URL,
+the `ContentRelevanceScorer` checks whether any keyword appears in:
+
+- the **URL path / query string** (always checked)
+- the **anchor text** of the link (always checked)
+- the **parent page title and snippet** (when `--content-boost` is enabled, which is the default)
+
+The normalised match fraction (keywords matched / total keywords) forms R(url). When no
+keywords are supplied, R(url) returns 0.5 (neutral) so the relevance signal has no effect.
+
+### New CLI flags in v5 (versus v4)
+
+```
+--annealing-schedule {linear,cosine,exponential}
+                        Decay schedule for exploration temperature (default: cosine)
+--annealing-initial-temp T
+                        Starting exploration temperature (default: 0.8)
+--annealing-final-temp T
+                        Minimum exploration temperature (default: 0.05)
+--relevance-keywords KWS
+                        Comma-separated relevance keywords, e.g. "AI,quantum,research"
+--relevance-weight FLOAT
+                        Weight for the content-relevance signal (default: 0.20)
+--content-boost         Check parent title/snippet for keyword matches (default: on)
+--no-content-boost      Disable parent-page content checking
+--use-v4-crawler        Run HybridQuantumCrawler (v4 behaviour) as a control baseline
+```
+
+### New JSONL output fields in v5
+
+- `adaptive_temperature` — exploration temperature in effect when the page was crawled
+- `relevance_score` — mean relevance score of the children enqueued from this page
+
+---
+
 ## Recursive crawling behavior
 
 - Starts at depth 0 from seeds.
@@ -275,7 +347,8 @@ Even with GPU Aer, note that small circuits like 5 qubits may not benefit much.
 - `quantum-decision-crawler1.py` — early crawler version, referenced by the video
 - `quantum-decision-crawler2.py` — later iteration
 - `quantum-decision-crawler3.py` — v3 crawler with benchmark/comparison support
-- `quantum-decision-crawler4.py` — latest crawler with hybrid scoring and dead-end backtracking
+- `quantum-decision-crawler4.py` — v4 stable crawler with hybrid scoring and dead-end backtracking
+- `quantum-decision-crawler5.py` — v5 experimental crawler with adaptive quantum annealing and content relevance scoring (needs further testing)
 - `seeds.txt` — seed URLs (one per line)
 - `crawl.jsonl` — output for normal crawling (one JSON object per crawled page)
 - `comparison.csv` — optional comparison-mode CSV output
@@ -364,6 +437,52 @@ uv run quantum-decision-crawler4.py \
   --force-curl
 ```
 
+### Run the v5 adaptive crawler (experimental)
+
+```bash
+uv run quantum-decision-crawler5.py \
+  --seeds seeds.txt \
+  --out crawl.jsonl \
+  --max-pages 200 \
+  --max-depth 3 \
+  --workers 16 \
+  --force-curl \
+  --dns-timeout 3.5 \
+  --total-timeout 10 \
+  --retries 1 \
+  --relevance-keywords "AI,machine learning,quantum" \
+  --annealing-schedule cosine \
+  --annealing-initial-temp 0.9 \
+  --annealing-final-temp 0.05 \
+  --debug
+```
+
+### Tune v5 weights and annealing
+
+```bash
+uv run quantum-decision-crawler5.py \
+  --seeds seeds.txt \
+  --max-pages 200 \
+  --max-depth 3 \
+  --quantum-weight 0.35 \
+  --heuristic-weight 0.20 \
+  --exploration-weight 0.15 \
+  --relevance-keywords "research,paper,dataset" \
+  --relevance-weight 0.30 \
+  --annealing-schedule exponential \
+  --annealing-initial-temp 0.7 \
+  --force-curl \
+  --total-timeout 12
+```
+
+### Run v4-style base behavior from v5
+
+```bash
+uv run quantum-decision-crawler5.py \
+  --seeds seeds.txt \
+  --use-v4-crawler
+```
+
 ---
 
 ## Output format
@@ -384,6 +503,8 @@ Normal crawl output is written to `crawl.jsonl`, one JSON object per line. Recor
 - `out_links_found`
 - `out_links_enqueued`
 - `hybrid_branch_dead_ends` (v4 hybrid mode)
+- `adaptive_temperature` (v5 adaptive mode)
+- `relevance_score` (v5 adaptive mode)
 - `ts`
 
 In comparison mode, the script writes flat benchmark-style records to CSV and detailed structured output to JSON.
