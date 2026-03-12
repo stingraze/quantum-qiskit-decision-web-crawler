@@ -35,9 +35,9 @@
 <!-- Stats cards -->
 <section class="stats-grid">
   {% set total = jobs | length %}
-  {% set running = jobs | selectattr('status', 'equalto', 'running') | list | length %}
+  {% set running = jobs | selectattr('status', 'in', ['running', 'paused']) | list | length %}
   {% set completed = jobs | selectattr('status', 'equalto', 'completed') | list | length %}
-  {% set failed = jobs | selectattr('status', 'equalto', 'failed') | list | length %}
+  {% set failed = jobs | selectattr('status', 'in', ['failed', 'stopped']) | list | length %}
   <div class="card stat-card">
     <div class="stat-value" id="stat-total">{{ total }}</div>
     <div class="stat-label">Total Jobs</div>
@@ -52,7 +52,7 @@
   </div>
   <div class="card stat-card stat-failed">
     <div class="stat-value" id="stat-failed">{{ failed }}</div>
-    <div class="stat-label">Failed</div>
+    <div class="stat-label">Failed / Stopped</div>
   </div>
 </section>
 
@@ -113,6 +113,10 @@
             <a href="{{ url_for('crawl_status', job_id=job.id) }}" class="btn btn-secondary btn-xs">View</a>
             {% if job.status == 'completed' %}
             <a href="{{ url_for('crawl_results', job_id=job.id) }}" class="btn btn-primary btn-xs">Results</a>
+            {% endif %}
+            {% if job.status in ('running', 'paused') %}
+            <button type="button" class="btn btn-danger btn-xs"
+                    onclick="stopJobFromDashboard('{{ job.id }}', this)">⏹</button>
             {% endif %}
           </td>
         </tr>
