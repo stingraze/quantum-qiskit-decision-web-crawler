@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 crawl.jsonl
+*.jsonl
 comparison.csv
 comparison.json
 crawl_outputs/
+instance/
