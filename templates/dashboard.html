@@ -39,19 +39,19 @@
   {% set completed = jobs | selectattr('status', 'equalto', 'completed') | list | length %}
   {% set failed = jobs | selectattr('status', 'equalto', 'failed') | list | length %}
   <div class="card stat-card">
-    <div class="stat-value">{{ total }}</div>
+    <div class="stat-value" id="stat-total">{{ total }}</div>
     <div class="stat-label">Total Jobs</div>
   </div>
   <div class="card stat-card stat-running">
-    <div class="stat-value">{{ running }}</div>
+    <div class="stat-value" id="stat-running">{{ running }}</div>
     <div class="stat-label">Running</div>
   </div>
   <div class="card stat-card stat-completed">
-    <div class="stat-value">{{ completed }}</div>
+    <div class="stat-value" id="stat-completed">{{ completed }}</div>
     <div class="stat-label">Completed</div>
   </div>
   <div class="card stat-card stat-failed">
-    <div class="stat-value">{{ failed }}</div>
+    <div class="stat-value" id="stat-failed">{{ failed }}</div>
     <div class="stat-label">Failed</div>
   </div>
 </section>
@@ -64,7 +64,7 @@
   </div>
 
   {% if jobs %}
-  <div class="table-responsive">
+  <div class="table-responsive" id="jobs-table-wrapper">
     <table class="table" id="jobs-table">
       <thead>
         <tr>
@@ -78,10 +78,10 @@
       </thead>
       <tbody>
         {% for job in jobs %}
-        <tr>
+        <tr data-job-id="{{ job.id }}">
           <td class="monospace text-muted" title="{{ job.id }}">{{ job.id[:8] }}…</td>
           <td>
-            <span class="badge badge-{{ job.status }}">{{ job.status }}</span>
+            <span class="badge badge-{{ job.status }}" id="badge-{{ job.id }}">{{ job.status }}</span>
           </td>
           <td>
             {% set mode = job.params.get('crawl_mode', 'hybrid') %}
@@ -93,7 +93,7 @@
               <span class="mode-tag mode-hybrid">Hybrid v4</span>
             {% endif %}
           </td>
-          <td class="text-muted">
+          <td class="text-muted" id="start-time-{{ job.id }}">
             {% if job.start_time and job.start_time | length >= 19 %}
               {{ job.start_time[:19].replace('T',' ') }} UTC
             {% elif job.start_time %}
@@ -109,7 +109,7 @@
               —
             {% endif %}
           </td>
-          <td>
+          <td id="actions-{{ job.id }}">
             <a href="{{ url_for('crawl_status', job_id=job.id) }}" class="btn btn-secondary btn-xs">View</a>
             {% if job.status == 'completed' %}
             <a href="{{ url_for('crawl_results', job_id=job.id) }}" class="btn btn-primary btn-xs">Results</a>
@@ -121,7 +121,7 @@
     </table>
   </div>
   {% else %}
-  <div class="empty-state">
+  <div class="empty-state" id="jobs-empty-state">
     <div class="empty-icon">🔬</div>
     <p class="empty-title">No crawl jobs yet</p>
     <p class="empty-sub">Start your first quantum web crawl to see results here.</p>
