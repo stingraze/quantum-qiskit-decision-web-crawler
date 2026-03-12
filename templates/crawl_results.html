@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Results – {{ job.id[:8] }}{% endblock %}
+
+{% block content %}
+<section class="hero hero-sm">
+  <div class="hero-content">
+    <h1 class="hero-title">Results Explorer</h1>
+    <p class="hero-subtitle monospace text-muted">Job {{ job.id }}</p>
+  </div>
+</section>
+
+<!-- Toolbar -->
+<div class="card results-toolbar">
+  <div class="toolbar-left">
+    <input type="search" id="results-search" class="form-control search-input"
+           placeholder="🔍 Search URLs, titles, snippets…" autocomplete="off" />
+  </div>
+  <div class="toolbar-right">
+    <span class="text-muted" id="results-count">Loading…</span>
+    <button class="btn btn-secondary" id="export-csv-btn">⬇ Export CSV</button>
+    <a href="{{ url_for('crawl_status', job_id=job.id) }}" class="btn btn-secondary">← Back</a>
+  </div>
+</div>
+
+<!-- Loading indicator -->
+<div id="results-loading" class="loading-block">
+  <div class="spinner-lg"></div>
+  <p>Loading results…</p>
+</div>
+
+<!-- Results table -->
+<div class="card section-card" id="results-section" hidden>
+  <div class="table-responsive">
+    <table class="table table-results" id="results-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="url">URL <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="final_url">Final URL <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="depth">Depth <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="status">Status <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="http_status">HTTP <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="title">Title <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="links_found">Links Found <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="links_enqueued">Enqueued <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="fetch_time">Fetch Time <span class="sort-icon">↕</span></th>
+          <th class="sortable" data-col="timestamp">Timestamp <span class="sort-icon">↕</span></th>
+        </tr>
+      </thead>
+      <tbody id="results-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pagination-bar" id="pagination-bar">
+    <button class="btn btn-secondary btn-xs" id="page-prev" disabled>← Prev</button>
+    <span id="page-info" class="text-muted"></span>
+    <button class="btn btn-secondary btn-xs" id="page-next" disabled>Next →</button>
+  </div>
+</div>
+
+<!-- Empty state -->
+<div class="card section-card" id="results-empty" hidden>
+  <div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <p class="empty-title">No results found</p>
+    <p class="empty-sub">The crawl may still be in progress or no pages matched your filters.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  initResultsExplorer({{ job.id | tojson }});
+</script>
+{% endblock %}
