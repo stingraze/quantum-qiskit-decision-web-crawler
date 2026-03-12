@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}New Crawl{% endblock %}
+
+{% block content %}
+<section class="hero hero-sm">
+  <div class="hero-content">
+    <h1 class="hero-title">New Crawl Job</h1>
+    <p class="hero-subtitle">Configure and launch a quantum-assisted web crawl</p>
+  </div>
+</section>
+
+<form method="POST" action="{{ url_for('crawl_new_post') }}" enctype="multipart/form-data" id="crawl-form" class="crawl-form" novalidate>
+
+  <!-- Seeds -->
+  <div class="card form-section">
+    <h2 class="form-section-title">🌱 Seed URLs</h2>
+    <div class="form-group">
+      <label for="seeds_text">Seed URLs <span class="hint">(one URL per line)</span></label>
+      <textarea id="seeds_text" name="seeds_text" rows="5" class="form-control monospace"
+        placeholder="https://example.com&#10;https://another.org"></textarea>
+    </div>
+    <div class="form-group">
+      <label for="seeds_file">Or upload a seeds file <span class="hint">(.txt)</span></label>
+      <input type="file" id="seeds_file" name="seeds_file" accept=".txt,text/plain" class="form-control-file" />
+      <div id="seeds-file-preview" class="file-preview hidden"></div>
+    </div>
+  </div>
+
+  <!-- Crawl Mode -->
+  <div class="card form-section">
+    <h2 class="form-section-title">⚛ Crawl Mode</h2>
+    <div class="radio-group">
+      <label class="radio-card">
+        <input type="radio" name="crawl_mode" value="hybrid" checked />
+        <span class="radio-label">
+          <strong>Hybrid v4</strong>
+          <small>Quantum + heuristic weights with dead-end backtracking</small>
+        </span>
+      </label>
+      <label class="radio-card">
+        <input type="radio" name="crawl_mode" value="base" />
+        <span class="radio-label">
+          <strong>Base Quantum</strong>
+          <small>Pure quantum circuit decision-making (v3 algorithm)</small>
+        </span>
+      </label>
+      <label class="radio-card">
+        <input type="radio" name="crawl_mode" value="compare" />
+        <span class="radio-label">
+          <strong>Comparison Mode</strong>
+          <small>Run both algorithms and produce comparison metrics</small>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Basic Settings -->
+  <div class="card form-section">
+    <h2 class="form-section-title">⚙ Basic Settings</h2>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="max_pages">Max Pages</label>
+        <input type="number" id="max_pages" name="max_pages" value="500" min="1" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label for="max_depth">Max Depth</label>
+        <input type="number" id="max_depth" name="max_depth" value="3" min="1" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label for="workers">Workers</label>
+        <input type="number" id="workers" name="workers" value="16" min="1" max="64" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label for="delay">Delay (s)</label>
+        <input type="number" id="delay" name="delay" value="0.6" min="0" step="0.1" class="form-control" />
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="allow">Allow Pattern <span class="hint">(regex)</span></label>
+        <input type="text" id="allow" name="allow" class="form-control monospace" placeholder="e\.g\. /docs/" />
+      </div>
+      <div class="form-group">
+        <label for="deny">Deny Pattern <span class="hint">(regex)</span></label>
+        <input type="text" id="deny" name="deny" class="form-control monospace" placeholder="e\.g\. /login" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Advanced Settings -->
+  <div class="card form-section collapsible-section" id="adv-section">
+    <button type="button" class="collapsible-toggle" aria-expanded="false" aria-controls="adv-body">
+      <span>🔬 Advanced Settings</span>
+      <span class="toggle-arrow">▶</span>
+    </button>
+    <div class="collapsible-body" id="adv-body" hidden>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="shots">Quantum Shots</label>
+          <input type="number" id="shots" name="shots" value="128" min="1" max="8192" class="form-control" />
+        </div>
+      </div>
+      <div class="form-checkboxes">
+        <label class="checkbox-label">
+          <input type="checkbox" name="debug" id="debug" />
+          <span>Enable debug logging</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="gpu_math" id="gpu_math" />
+          <span>GPU math acceleration</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="no_aer_gpu" id="no_aer_gpu" />
+          <span>Disable Aer GPU simulator</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hybrid Weights -->
+  <div class="card form-section collapsible-section" id="weights-section">
+    <button type="button" class="collapsible-toggle" aria-expanded="false" aria-controls="weights-body">
+      <span>⚖ Hybrid Weights</span>
+      <span class="toggle-arrow">▶</span>
+    </button>
+    <div class="collapsible-body" id="weights-body" hidden>
+      <p class="hint mb-2">Weights should sum to 1.0</p>
+      <div class="slider-row">
+        <label for="quantum_weight">Quantum Weight</label>
+        <input type="range" id="quantum_weight_slider" min="0" max="1" step="0.01" value="0.45" class="slider" data-target="quantum_weight" />
+        <input type="number" id="quantum_weight" name="quantum_weight" value="0.45" min="0" max="1" step="0.01" class="form-control slider-number" />
+      </div>
+      <div class="slider-row">
+        <label for="heuristic_weight">Heuristic Weight</label>
+        <input type="range" id="heuristic_weight_slider" min="0" max="1" step="0.01" value="0.35" class="slider" data-target="heuristic_weight" />
+        <input type="number" id="heuristic_weight" name="heuristic_weight" value="0.35" min="0" max="1" step="0.01" class="form-control slider-number" />
+      </div>
+      <div class="slider-row">
+        <label for="exploration_weight">Exploration Weight</label>
+        <input type="range" id="exploration_weight_slider" min="0" max="1" step="0.01" value="0.20" class="slider" data-target="exploration_weight" />
+        <input type="number" id="exploration_weight" name="exploration_weight" value="0.20" min="0" max="1" step="0.01" class="form-control slider-number" />
+      </div>
+      <div class="slider-row">
+        <label for="exploration_temperature">Exploration Temperature</label>
+        <input type="range" id="exploration_temperature_slider" min="0" max="2" step="0.01" value="0.4" class="slider" data-target="exploration_temperature" />
+        <input type="number" id="exploration_temperature" name="exploration_temperature" value="0.4" min="0" max="2" step="0.01" class="form-control slider-number" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Dead-End Backtracking -->
+  <div class="card form-section collapsible-section" id="deadend-section">
+    <button type="button" class="collapsible-toggle" aria-expanded="false" aria-controls="deadend-body">
+      <span>🔄 Dead-End Backtracking</span>
+      <span class="toggle-arrow">▶</span>
+    </button>
+    <div class="collapsible-body" id="deadend-body" hidden>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="dead_end_threshold">Dead-End Threshold</label>
+          <input type="number" id="dead_end_threshold" name="dead_end_threshold" value="2" min="0" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="backtrack_boost">Backtrack Boost</label>
+          <input type="number" id="backtrack_boost" name="backtrack_boost" value="0.25" min="0" step="0.01" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="dead_ends_before_boost">Dead-Ends Before Boost</label>
+          <input type="number" id="dead_ends_before_boost" name="dead_ends_before_boost" value="1" min="0" class="form-control" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Network Settings -->
+  <div class="card form-section collapsible-section" id="net-section">
+    <button type="button" class="collapsible-toggle" aria-expanded="false" aria-controls="net-body">
+      <span>🌐 Network Settings</span>
+      <span class="toggle-arrow">▶</span>
+    </button>
+    <div class="collapsible-body" id="net-body" hidden>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="connect_timeout">Connect Timeout (s)</label>
+          <input type="number" id="connect_timeout" name="connect_timeout" value="5.0" min="0" step="0.1" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="read_timeout">Read Timeout (s)</label>
+          <input type="number" id="read_timeout" name="read_timeout" value="25.0" min="0" step="0.1" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="total_timeout">Total Timeout (s)</label>
+          <input type="number" id="total_timeout" name="total_timeout" value="12.0" min="0" step="0.1" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="dns_timeout">DNS Timeout (s)</label>
+          <input type="number" id="dns_timeout" name="dns_timeout" value="4.0" min="0" step="0.1" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="retries">Retries</label>
+          <input type="number" id="retries" name="retries" value="1" min="0" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="backoff">Backoff (s)</label>
+          <input type="number" id="backoff" name="backoff" value="0.6" min="0" step="0.1" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="robots_ttl">Robots TTL (s)</label>
+          <input type="number" id="robots_ttl" name="robots_ttl" value="21600" min="0" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="sitemap_max_urls">Sitemap Max URLs</label>
+          <input type="number" id="sitemap_max_urls" name="sitemap_max_urls" value="5000" min="0" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="sitemap_index_depth">Sitemap Index Depth</label>
+          <input type="number" id="sitemap_index_depth" name="sitemap_index_depth" value="2" min="0" class="form-control" />
+        </div>
+      </div>
+      <div class="form-checkboxes">
+        <label class="checkbox-label">
+          <input type="checkbox" name="force_curl" id="force_curl" />
+          <span>Force cURL transport</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="no_respect_robots" id="no_respect_robots" />
+          <span>Ignore robots.txt</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="no_use_sitemaps" id="no_use_sitemaps" />
+          <span>Disable sitemap parsing</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison Settings (shown only for compare mode) -->
+  <div class="card form-section" id="compare-section" hidden>
+    <h2 class="form-section-title">📊 Comparison Settings</h2>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="compare_duration">Comparison Duration (s)</label>
+        <input type="number" id="compare_duration" name="compare_duration" value="180.0" min="1" step="1" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label for="compare_csv">CSV Output Filename</label>
+        <input type="text" id="compare_csv" name="compare_csv" value="comparison.csv" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label for="compare_json">JSON Output Filename</label>
+        <input type="text" id="compare_json" name="compare_json" value="comparison.json" class="form-control" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Submit -->
+  <div class="form-actions">
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary" id="submit-btn">
+      <span id="submit-label">⚛ Start Crawl</span>
+    </button>
+  </div>
+
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  initNewCrawlForm();
+</script>
+{% endblock %}

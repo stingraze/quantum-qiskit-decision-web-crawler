@@ -3,3 +3,4 @@ __pycache__/
 crawl.jsonl
 comparison.csv
 comparison.json
+crawl_outputs/
