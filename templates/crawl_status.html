@@ -51,6 +51,17 @@
   </div>
 </div>
 
+<!-- Job controls (visible while running or paused) -->
+<div class="card section-card" id="job-controls"{% if job.status not in ('running', 'paused') %} style="display:none"{% endif %}>
+  <h2 class="section-title">🎮 Job Controls</h2>
+  <div class="action-row">
+    <button type="button" class="btn btn-warning" id="pause-btn">
+      {% if job.get('paused') %}▶ Resume{% else %}⏸ Pause{% endif %}
+    </button>
+    <button type="button" class="btn btn-danger" id="stop-btn">⏹ Stop</button>
+  </div>
+</div>
+
 <!-- Summary stats (populated from log when done) -->
 <div class="card section-card" id="summary-card" hidden>
   <h2 class="section-title">📊 Summary</h2>
@@ -117,7 +128,8 @@
     {{ job.id | tojson }},
     {{ job.status | tojson }},
     {{ job.start_time | tojson if job.start_time else 'null' }},
-    {{ job.end_time | tojson if job.end_time else 'null' }}
+    {{ job.end_time | tojson if job.end_time else 'null' }},
+    {{ job.get('paused', False) | tojson }}
   );
 </script>
 {% endblock %}

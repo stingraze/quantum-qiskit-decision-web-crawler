@@ -1,6 +1,7 @@
 # Not tested yet. Proceed at your own risk - 3/12/2026 - Tsubasa Kato - Inspire Search Corp.
 import json
 import os
+import signal
 import sys
 import threading
 import uuid
@@ -40,7 +41,11 @@ def _utcnow_iso() -> str:
 def _duration(job: dict) -> float | None:
     if not job.get("start_time"):
         return None
-    end = job.get("end_time") or _utcnow_iso()
+    # For terminal statuses, use end_time; for active statuses, use current time
+    terminal = job.get("status") in ("completed", "failed", "stopped")
+    end = job.get("end_time") or (None if terminal else _utcnow_iso())
+    if not end:
+        return None
     try:
         start = datetime.fromisoformat(job["start_time"])
         stop = datetime.fromisoformat(end)
@@ -53,6 +58,7 @@ def _job_summary(job: dict) -> dict:
     return {
         "id": job["id"],
         "status": job["status"],
+        "paused": job.get("paused", False),
         "start_time": job.get("start_time"),
         "end_time": job.get("end_time"),
         "duration": _duration(job),
@@ -108,6 +114,8 @@ def _run_crawler(job_id: str, cmd: list[str]) -> None:
             text=True,
             bufsize=1,
         )
+        with jobs_lock:
+            jobs[job_id]["process"] = proc
         for line in proc.stdout:
             log_lines.append(line.rstrip("\n"))
         proc.wait()
@@ -117,6 +125,12 @@ def _run_crawler(job_id: str, cmd: list[str]) -> None:
         exit_code = 1
 
     with jobs_lock:
+        # Don't overwrite status if the job was stopped by the user
+        if jobs[job_id].get("status") == "stopped":
+            log_lines.append(
+                f"[QuantumCrawler] Job finished – exit code {exit_code}, status=stopped"
+            )
+            return
         jobs[job_id]["end_time"] = _utcnow_iso()
         jobs[job_id]["status"] = "completed" if exit_code == 0 else "failed"
         log_lines.append(
@@ -247,6 +261,7 @@ def _start_job(params: dict, seeds_text: str | None = None, seeds_file_path: str
     job: dict = {
         "id": job_id,
         "status": "pending",
+        "paused": False,
         "start_time": None,
         "end_time": None,
         "log_lines": [],
@@ -256,6 +271,7 @@ def _start_job(params: dict, seeds_text: str | None = None, seeds_file_path: str
         "out_jsonl": out_jsonl,
         "compare_csv": compare_csv,
         "compare_json": compare_json,
+        "process": None,
     }
 
     with jobs_lock:
@@ -406,7 +422,100 @@ def api_job_detail(job_id: str):
 @app.route("/api/jobs/<job_id>/logs", methods=["GET"])
 def api_job_logs(job_id: str):
     job = _get_job(job_id)
-    return jsonify({"log": job["log_lines"], "status": job["status"]})
+    return jsonify({"log": job["log_lines"], "status": job["status"], "paused": job.get("paused", False)})
+
+
+@app.route("/api/jobs/<job_id>/pause", methods=["POST"])
+def api_job_pause(job_id: str):
+    job = _get_job(job_id)
+
+    # SIGSTOP/SIGCONT are not available on Windows
+    if not hasattr(signal, "SIGSTOP"):
+        return jsonify({"error": "Pause/resume is not supported on this platform."}), 501
+
+    with jobs_lock:
+        if job["status"] not in ("running", "paused"):
+            return jsonify({"error": "Job is not running or paused."}), 409
+
+        proc = job.get("process")
+        if not proc:
+            return jsonify({"error": "Subprocess not available."}), 409
+
+        log_lines: list[str] = job["log_lines"]
+
+        if not job.get("paused", False):
+            # Pause the process group
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGSTOP)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(proc.pid, signal.SIGSTOP)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            job["paused"] = True
+            job["status"] = "paused"
+            log_lines.append("[QuantumCrawler] Job paused by user")
+            new_status = "paused"
+        else:
+            # Resume the process group
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGCONT)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(proc.pid, signal.SIGCONT)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            job["paused"] = False
+            job["status"] = "running"
+            log_lines.append("[QuantumCrawler] Job resumed by user")
+            new_status = "running"
+
+    return jsonify({"status": new_status, "paused": job["paused"]})
+
+
+@app.route("/api/jobs/<job_id>/stop", methods=["POST"])
+def api_job_stop(job_id: str):
+    job = _get_job(job_id)
+
+    with jobs_lock:
+        if job["status"] not in ("running", "paused"):
+            return jsonify({"error": "Job is not running or paused."}), 409
+
+        proc = job.get("process")
+        log_lines: list[str] = job["log_lines"]
+
+        # Mark stopped before terminating so _run_crawler thread won't overwrite status
+        job["status"] = "stopped"
+        job["end_time"] = _utcnow_iso()
+        log_lines.append("[QuantumCrawler] Job stopped by user")
+
+    if proc:
+        # If paused, resume first so it can receive SIGTERM
+        if job.get("paused") and hasattr(signal, "SIGCONT"):
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGCONT)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(proc.pid, signal.SIGCONT)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        with jobs_lock:
+            job["paused"] = False
+
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception as exc:
+            app.logger.warning("[QuantumCrawler] terminate() failed for job %s: %s", job_id, exc)
+            try:
+                proc.kill()
+            except Exception as kill_exc:
+                app.logger.warning("[QuantumCrawler] kill() failed for job %s: %s", job_id, kill_exc)
+
+    return jsonify({"status": "stopped"})
 
 
 @app.route("/api/jobs/<job_id>/results", methods=["GET"])

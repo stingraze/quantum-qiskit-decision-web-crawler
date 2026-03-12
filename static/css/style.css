@@ -284,6 +284,8 @@ h1, h2, h3 { font-weight: 600; line-height: 1.3; }
 .badge-running   { background: rgba(210,153,34,0.18);  color: var(--warning);    border-color: rgba(210,153,34,0.4); animation: pulse 2s infinite; }
 .badge-completed { background: rgba(63,185,80,0.18);   color: var(--success);    border-color: rgba(63,185,80,0.4); }
 .badge-failed    { background: rgba(248,81,73,0.18);   color: var(--danger);     border-color: rgba(248,81,73,0.4); }
+.badge-paused    { background: rgba(210,153,34,0.18);  color: var(--warning);    border-color: rgba(210,153,34,0.4); }
+.badge-stopped   { background: rgba(139,148,158,0.18); color: var(--text-muted); border-color: var(--border); }
 
 /* ----- Mode tags ----- */
 .mode-tag {

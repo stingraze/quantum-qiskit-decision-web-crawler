@@ -73,10 +73,22 @@ function initDashboardRefresh(intervalMs) {
   setInterval(renderDurations, 1000);
 
   // Start polling only when there are active jobs
-  const hasActive = document.querySelector('.badge-running, .badge-pending') !== null;
+  const hasActive = document.querySelector('.badge-running, .badge-pending, .badge-paused') !== null;
   if (hasActive) {
     _startDashboardPoller(intervalMs);
   }
+}
+
+function stopJobFromDashboard(jobId, btn) {
+  if (!confirm('Are you sure you want to stop this crawl?')) return;
+  btn.disabled = true;
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/stop', { method: 'POST' })
+    .then(r => r.json())
+    .then(() => { /* dashboard poller will update the row */ })
+    .catch(err => {
+      console.error('[dashboard] stop error:', err);
+      btn.disabled = false;
+    });
 }
 
 function _startDashboardPoller(intervalMs) {
@@ -88,7 +100,7 @@ function _startDashboardPoller(intervalMs) {
       _updateDashboard(jobs);
 
       // Stop polling when no more active jobs
-      const stillActive = jobs.some(j => j.status === 'running' || j.status === 'pending');
+      const stillActive = jobs.some(j => j.status === 'running' || j.status === 'pending' || j.status === 'paused');
       if (!stillActive) {
         clearInterval(pollTimer);
         pollTimer = null;
@@ -102,9 +114,9 @@ function _startDashboardPoller(intervalMs) {
 function _updateDashboard(jobs) {
   // Update stats cards
   const total     = jobs.length;
-  const running   = jobs.filter(j => j.status === 'running').length;
+  const running   = jobs.filter(j => j.status === 'running' || j.status === 'paused').length;
   const completed = jobs.filter(j => j.status === 'completed').length;
-  const failed    = jobs.filter(j => j.status === 'failed').length;
+  const failed    = jobs.filter(j => j.status === 'failed' || j.status === 'stopped').length;
 
   const statTotal     = $('stat-total');
   const statRunning   = $('stat-running');
@@ -171,6 +183,10 @@ function _actionsHtml(job) {
   let html = `<a href="${escapeHtml(viewHref)}" class="btn btn-secondary btn-xs">View</a>`;
   if (job.status === 'completed') {
     html += ` <a href="${escapeHtml(resultsHref)}" class="btn btn-primary btn-xs">Results</a>`;
+  }
+  if (job.status === 'running' || job.status === 'paused') {
+    const safeId = escapeHtml(job.id);
+    html += ` <button type="button" class="btn btn-danger btn-xs" onclick="stopJobFromDashboard('${safeId}', this)">⏹</button>`;
   }
   return html;
 }
@@ -334,7 +350,7 @@ function initNewCrawlForm() {
 /* --------------------------------------------------------
    Job log poller
    -------------------------------------------------------- */
-function initJobPoller(jobId, initialStatus, initialStart, initialEnd) {
+function initJobPoller(jobId, initialStatus, initialStart, initialEnd, initialPaused) {
   const terminal   = $('log-terminal');
   const badge      = $('status-badge');
   const spinner    = $('log-spinner');
@@ -342,8 +358,12 @@ function initJobPoller(jobId, initialStatus, initialStart, initialEnd) {
   const autoscroll = $('autoscroll-toggle');
   const resultsLink = $('results-link');
   const summaryCard = $('summary-card');
+  const pauseBtn   = $('pause-btn');
+  const stopBtn    = $('stop-btn');
+  const controlsCard = $('job-controls');
 
   let status = initialStatus;
+  let paused = !!initialPaused;
   let startTime = initialStart;
   let endTime   = initialEnd;
   let lastLen   = 0;
@@ -366,6 +386,16 @@ function initJobPoller(jobId, initialStatus, initialStart, initialEnd) {
     if (!badge) return;
     badge.textContent = s;
     badge.className = `badge badge-${s} badge-lg`;
+  }
+
+  function updateControls() {
+    const isActive = status === 'running' || status === 'paused';
+    if (controlsCard) controlsCard.style.display = isActive ? '' : 'none';
+    if (pauseBtn) {
+      pauseBtn.disabled = !isActive;
+      pauseBtn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+    }
+    if (stopBtn) stopBtn.disabled = !isActive;
   }
 
   function extractSummaryFromLogs(lines) {
@@ -417,12 +447,14 @@ function initJobPoller(jobId, initialStatus, initialStart, initialEnd) {
       if (!resp.ok) return;
       const data = await resp.json();
 
-      status   = data.status;
+      status = data.status;
+      paused = !!data.paused;
       const lines = data.log || [];
       renderLog(lines);
       updateBadge(status);
+      updateControls();
 
-      if (status === 'completed' || status === 'failed') {
+      if (status === 'completed' || status === 'failed' || status === 'stopped') {
         stopPolling();
         // Try to get end time from full job detail
         try {
@@ -445,12 +477,75 @@ function initJobPoller(jobId, initialStatus, initialStart, initialEnd) {
     updateDuration();
   }
 
+  // Pause / Resume button
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', async () => {
+      pauseBtn.disabled = true;
+      try {
+        const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/pause`, { method: 'POST' });
+        if (resp.ok) {
+          const data = await resp.json();
+          status = data.status;
+          paused = !!data.paused;
+          updateBadge(status);
+          updateControls();
+        } else {
+          console.error('[poller] pause/resume failed, status:', resp.status);
+        }
+      } catch (err) {
+        console.error('[poller] pause/resume error:', err);
+      }
+      pauseBtn.disabled = false;
+    });
+  }
+
+  // Stop button
+  if (stopBtn) {
+    stopBtn.addEventListener('click', async () => {
+      if (!confirm('Are you sure you want to stop this crawl?')) return;
+      stopBtn.disabled = true;
+      if (pauseBtn) pauseBtn.disabled = true;
+      try {
+        const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { method: 'POST' });
+        if (resp.ok) {
+          status = 'stopped';
+          paused = false;
+          updateBadge(status);
+          updateControls();
+          stopPolling();
+          // Fetch final state
+          try {
+            const jr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+            if (jr.ok) {
+              const jd = await jr.json();
+              endTime = jd.end_time || endTime;
+              startTime = jd.start_time || startTime;
+            }
+          } catch (err) {
+            console.error('[poller] failed to fetch final job state:', err);
+          }
+          updateDuration();
+        } else {
+          console.error('[poller] stop failed, status:', resp.status);
+          stopBtn.disabled = false;
+          if (pauseBtn) pauseBtn.disabled = false;
+        }
+      } catch (err) {
+        console.error('[poller] stop error:', err);
+        stopBtn.disabled = false;
+        if (pauseBtn) pauseBtn.disabled = false;
+      }
+    });
+  }
+
   // Kick off
-  if (status === 'completed' || status === 'failed') {
+  if (status === 'completed' || status === 'failed' || status === 'stopped') {
     stopPolling();
     poll(); // one-shot to populate log
     updateDuration();
+    updateControls();
   } else {
+    updateControls();
     poll();
     pollTimer = setInterval(poll, 2000);
     // Live duration tick
