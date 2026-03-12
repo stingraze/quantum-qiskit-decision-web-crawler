@@ -65,20 +65,158 @@ function renderDurations() {
 }
 
 /* --------------------------------------------------------
-   Dashboard auto-refresh
+   Dashboard auto-refresh (Ajax-based, no page reload)
    -------------------------------------------------------- */
 function initDashboardRefresh(intervalMs) {
-  // Render durations immediately
+  // Render durations immediately and keep ticking
   renderDurations();
-
-  // Tick running durations live
   setInterval(renderDurations, 1000);
 
-  // Full page refresh when any running job exists
-  const hasRunning = document.querySelector('.badge-running') !== null;
-  if (hasRunning) {
-    setTimeout(() => location.reload(), intervalMs);
+  // Start polling only when there are active jobs
+  const hasActive = document.querySelector('.badge-running, .badge-pending') !== null;
+  if (hasActive) {
+    _startDashboardPoller(intervalMs);
   }
+}
+
+function _startDashboardPoller(intervalMs) {
+  let pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/jobs');
+      if (!resp.ok) return;
+      const jobs = await resp.json();
+      _updateDashboard(jobs);
+
+      // Stop polling when no more active jobs
+      const stillActive = jobs.some(j => j.status === 'running' || j.status === 'pending');
+      if (!stillActive) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    } catch (err) {
+      console.error('[dashboard] poll error:', err);
+    }
+  }, intervalMs);
+}
+
+function _updateDashboard(jobs) {
+  // Update stats cards
+  const total     = jobs.length;
+  const running   = jobs.filter(j => j.status === 'running').length;
+  const completed = jobs.filter(j => j.status === 'completed').length;
+  const failed    = jobs.filter(j => j.status === 'failed').length;
+
+  const statTotal     = $('stat-total');
+  const statRunning   = $('stat-running');
+  const statCompleted = $('stat-completed');
+  const statFailed    = $('stat-failed');
+  if (statTotal)     statTotal.textContent     = total;
+  if (statRunning)   statRunning.textContent   = running;
+  if (statCompleted) statCompleted.textContent = completed;
+  if (statFailed)    statFailed.textContent    = failed;
+
+  // Handle empty-state → table transition when jobs first appear
+  const emptyState  = $('jobs-empty-state');
+  const tableWrapper = $('jobs-table-wrapper');
+  if (jobs.length > 0 && emptyState && !tableWrapper) {
+    // Build the table from scratch and insert it
+    const section = emptyState.parentElement;
+    emptyState.remove();
+    const wrapper = document.createElement('div');
+    wrapper.className = 'table-responsive';
+    wrapper.id = 'jobs-table-wrapper';
+    wrapper.innerHTML =
+      '<table class="table" id="jobs-table">' +
+        '<thead><tr>' +
+          '<th>Job ID</th><th>Status</th><th>Mode</th>' +
+          '<th>Start Time</th><th>Duration</th><th>Actions</th>' +
+        '</tr></thead>' +
+        '<tbody></tbody>' +
+      '</table>';
+    section.appendChild(wrapper);
+  }
+
+  // Update / insert rows
+  const tbody = document.querySelector('#jobs-table tbody');
+  if (!tbody) return;
+
+  jobs.forEach(job => {
+    const existingRow = Array.from(tbody.querySelectorAll('tr[data-job-id]'))
+      .find(r => r.dataset.jobId === job.id);
+    if (existingRow) {
+      _updateJobRow(existingRow, job);
+    } else {
+      const newRow = _buildJobRow(job);
+      // Prepend so newest jobs appear at the top (matching server render order)
+      tbody.insertBefore(newRow, tbody.firstChild);
+    }
+  });
+}
+
+function _modeTag(mode) {
+  if (mode === 'compare') return '<span class="mode-tag mode-compare">Compare</span>';
+  if (mode === 'base')    return '<span class="mode-tag mode-base">Base</span>';
+  return '<span class="mode-tag mode-hybrid">Hybrid v4</span>';
+}
+
+function _fmtStartTime(iso) {
+  if (!iso) return '<em>pending</em>';
+  const s = String(iso);
+  return escapeHtml(s.length >= 19 ? s.slice(0, 19).replace('T', ' ') + ' UTC' : s + ' UTC');
+}
+
+function _actionsHtml(job) {
+  const viewHref    = `/crawl/${encodeURIComponent(job.id)}`;
+  const resultsHref = `/crawl/${encodeURIComponent(job.id)}/results`;
+  let html = `<a href="${escapeHtml(viewHref)}" class="btn btn-secondary btn-xs">View</a>`;
+  if (job.status === 'completed') {
+    html += ` <a href="${escapeHtml(resultsHref)}" class="btn btn-primary btn-xs">Results</a>`;
+  }
+  return html;
+}
+
+function _buildJobRow(job) {
+  const tr = document.createElement('tr');
+  tr.dataset.jobId = job.id;
+  const mode = (job.params && job.params.crawl_mode) || 'hybrid';
+  tr.innerHTML =
+    `<td class="monospace text-muted" title="${escapeHtml(job.id)}">${escapeHtml(job.id.slice(0, 8))}…</td>` +
+    `<td><span class="badge badge-${escapeHtml(job.status)}" id="badge-${escapeHtml(job.id)}">${escapeHtml(job.status)}</span></td>` +
+    `<td>${_modeTag(mode)}</td>` +
+    `<td class="text-muted" id="start-time-${escapeHtml(job.id)}">${_fmtStartTime(job.start_time)}</td>` +
+    `<td class="text-muted" data-job-id="${escapeHtml(job.id)}" data-start="${escapeHtml(job.start_time || '')}" data-end="${escapeHtml(job.end_time || '')}" data-status="${escapeHtml(job.status)}">` +
+      (job.start_time ? '<span class="duration-cell">…</span>' : '—') +
+    `</td>` +
+    `<td id="actions-${escapeHtml(job.id)}">${_actionsHtml(job)}</td>`;
+  return tr;
+}
+
+function _updateJobRow(tr, job) {
+  // Badge
+  const badge = $(`badge-${job.id}`);
+  if (badge) {
+    badge.textContent = job.status;
+    badge.className = `badge badge-${job.status}`;
+  }
+
+  // Start time
+  const startTd = $(`start-time-${job.id}`);
+  if (startTd) startTd.innerHTML = _fmtStartTime(job.start_time);
+
+  // Duration cell – update data attributes so renderDurations() keeps working
+  const durTd = tr.querySelector(`td[data-job-id]`);
+  if (durTd) {
+    durTd.dataset.start  = job.start_time || '';
+    durTd.dataset.end    = job.end_time   || '';
+    durTd.dataset.status = job.status;
+    if (job.start_time && !durTd.querySelector('.duration-cell')) {
+      durTd.innerHTML = '<span class="duration-cell">…</span>';
+    }
+  }
+
+  // Actions – add Results button when job completes
+  const actionsTd = $(`actions-${job.id}`);
+  if (actionsTd) actionsTd.innerHTML = _actionsHtml(job);
 }
 
 /* --------------------------------------------------------
