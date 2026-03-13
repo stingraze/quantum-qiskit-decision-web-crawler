@@ -6,6 +6,9 @@ quantum-decision-crawler1.py - Video on YouTube
 
 [![Watch the video](https://img.youtube.com/vi/UE0z3WZRcwc/hqdefault.jpg)](https://www.youtube.com/embed/UE0z3WZRcwc)
 
+This project uses Qiskit. Qiskit is a registered trademark of IBM. 
+This repository is independent and not affiliated with or endorsed by IBM.
+
 News 3/6/2026: An article was written on The Quantum Dragon (feat. IQT News)!:
 
 https://bsiegelwax.substack.com/p/quantum-web-crawler (3/1/2026)
