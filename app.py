@@ -1,4 +1,4 @@
-# Tested lightly as of 3/12/2026 22:53PM JST - Tsubasa Kato - Inspire Search Corp.
+# Not tested yet. Proceed at your own risk - 3/12/2026 - Tsubasa Kato - Inspire Search Corp.
 import json
 import os
 import signal
@@ -89,6 +89,73 @@ def _parse_jsonl(path: str) -> list[dict]:
     except FileNotFoundError:
         pass
     return results
+
+
+def _to_iso_timestamp(ts_val) -> str | None:
+    """
+    Convert epoch seconds (float/int) to ISO-8601 (UTC). If conversion fails,
+    return None so the UI can fall back to displaying '—'.
+    """
+    if ts_val is None:
+        return None
+
+    try:
+        # Most crawler outputs use epoch seconds.
+        if isinstance(ts_val, (int, float)):
+            return datetime.fromtimestamp(float(ts_val), tz=timezone.utc).isoformat()
+
+        if isinstance(ts_val, str):
+            s = ts_val.strip()
+            if not s:
+                return None
+            # Sometimes ts may be numeric-as-string.
+            try:
+                return datetime.fromtimestamp(float(s), tz=timezone.utc).isoformat()
+            except Exception:
+                # If it's already ISO-ish, keep it for the UI.
+                if "T" in s and "-" in s:
+                    return s
+    except Exception:
+        return None
+
+    return None
+
+
+def _normalise_explorer_row(row: dict) -> dict:
+    """
+    Results Explorer expects:
+      - links_found / links_enqueued
+      - fetch_time (seconds)
+      - timestamp (ISO string)
+
+    The crawlers may emit:
+      - out_links_found / out_links_enqueued
+      - fetch_seconds
+      - ts (epoch seconds)
+    """
+    r = dict(row)
+
+    if r.get("links_found") is None and "out_links_found" in r:
+        r["links_found"] = r.get("out_links_found")
+    if r.get("links_enqueued") is None and "out_links_enqueued" in r:
+        r["links_enqueued"] = r.get("out_links_enqueued")
+
+    if r.get("fetch_time") is None and "fetch_seconds" in r:
+        r["fetch_time"] = r.get("fetch_seconds")
+    if isinstance(r.get("fetch_time"), str):
+        try:
+            r["fetch_time"] = float(r["fetch_time"])
+        except Exception:
+            pass
+
+    if r.get("timestamp") is None:
+        # Crawlers typically store this as epoch seconds in `ts`.
+        ts_val = r.get("ts")
+        iso = _to_iso_timestamp(ts_val)
+        if iso:
+            r["timestamp"] = iso
+
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +589,22 @@ def api_job_stop(job_id: str):
 def api_job_results(job_id: str):
     job = _get_job(job_id)
     results = _parse_jsonl(job["out_jsonl"])
-    return jsonify(results)
+    if results:
+        return jsonify([_normalise_explorer_row(r) for r in results])
+
+    # Comparison mode doesn't emit crawl.jsonl; fall back to comparison.json.
+    compare_json_path = job.get("compare_json")
+    if compare_json_path and os.path.exists(compare_json_path):
+        try:
+            with open(compare_json_path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            records = payload.get("records") or []
+            if isinstance(records, list) and records:
+                return jsonify([_normalise_explorer_row(r) for r in records if isinstance(r, dict)])
+        except Exception:
+            pass
+
+    return jsonify([])
 
 
 @app.route("/api/jobs/<job_id>/download/<filetype>", methods=["GET"])
@@ -540,7 +622,31 @@ def api_job_download(job_id: str, filetype: str):
 
     path, filename, mimetype = file_map[filetype]
     if not os.path.exists(path):
-        abort(404, description=f"Output file not yet available for filetype={filetype!r}.")
+        # Comparison mode doesn't emit crawl.jsonl; generate it on-demand so
+        # "Download JSONL" works for already-completed jobs too.
+        if filetype == "jsonl":
+            compare_json_path = job.get("compare_json")
+            if compare_json_path and os.path.exists(compare_json_path):
+                try:
+                    with open(compare_json_path, encoding="utf-8") as fh:
+                        payload = json.load(fh)
+                    records = payload.get("records") or []
+                    if isinstance(records, list):
+                        with open(path, "w", encoding="utf-8") as out_f:
+                            for r in records:
+                                if isinstance(r, dict):
+                                    out_f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                        app.logger.info(
+                            "[QuantumCrawler] Generated missing crawl.jsonl for job=%s (%d rows)",
+                            job_id,
+                            len(records),
+                        )
+                except Exception:
+                    # Fall through to the normal 404 behaviour.
+                    pass
+
+        if not os.path.exists(path):
+            abort(404, description=f"Output file not yet available for filetype={filetype!r}.")
 
     return send_file(path, mimetype=mimetype, as_attachment=True, download_name=filename)
 

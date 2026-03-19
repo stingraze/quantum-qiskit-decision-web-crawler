@@ -2066,6 +2066,15 @@ def run_comparison_mode(
 
         logger.info("[COMPARE] %s summary: %s", algo, json.dumps(summaries[algo]))
 
+    # Also emit crawl.jsonl so the web UI can display Results Explorer.
+    # (Comparison mode otherwise doesn't write --out.)
+    out_jsonl = crawler_kwargs.get("out_jsonl")
+    if out_jsonl:
+        with open(out_jsonl, "w", encoding="utf-8") as f:
+            for r in all_records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        logger.info("[COMPARE] JSONL written to: %s (%d rows)", out_jsonl, len(all_records))
+
     # ---- Write CSV ----
     if all_records:
         with open(out_csv, "w", newline="", encoding="utf-8") as f:
