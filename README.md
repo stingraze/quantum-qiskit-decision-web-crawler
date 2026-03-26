@@ -352,10 +352,69 @@ Even with GPU Aer, note that small circuits like 5 qubits may not benefit much.
 - `quantum-decision-crawler3.py` — v3 crawler with benchmark/comparison support
 - `quantum-decision-crawler4.py` — v4 stable crawler with hybrid scoring and dead-end backtracking
 - `quantum-decision-crawler5.py` — v5 experimental crawler with adaptive quantum annealing and content relevance scoring (needs further testing)
+- `app.py` — Flask web application providing a browser dashboard and REST API for managing crawl jobs
+- `requirements-web.txt` — Python dependencies for the Flask web app
 - `seeds.txt` — seed URLs (one per line)
 - `crawl.jsonl` — output for normal crawling (one JSON object per crawled page)
 - `comparison.csv` — optional comparison-mode CSV output
 - `comparison.json` — optional comparison-mode JSON output
+
+---
+
+## Flask Web UI (`app.py`)
+
+`app.py` is a Flask web application that wraps `quantum-decision-crawler4.py`. It provides both an HTML dashboard (for browser use) and a JSON REST API (for programmatic use). It listens on `0.0.0.0:5000` by default.
+
+### Crawl Modes
+
+The Flask app supports three crawl modes, selected via the `crawl_mode` parameter when creating a new job:
+
+| Mode | `crawl_mode` value | Description |
+|---|---|---|
+| **Hybrid** (default) | `hybrid` | Runs the full v4 hybrid quantum/heuristic/exploration scoring pipeline. |
+| **Base** | `base` | Passes `--use-base-crawler` to run v3-style pure quantum scoring as a control baseline. |
+| **Compare** | `compare` | Passes `--compare-algorithms` to benchmark `quantum` vs `dfs` vs `bfs` side-by-side for `--compare-duration` seconds, exporting results to CSV and JSON. |
+
+### HTML Routes (Browser UI)
+
+| Route | Purpose |
+|---|---|
+| `GET /` | Dashboard — lists all crawl jobs sorted by most recent. |
+| `GET /crawl/new` | New Crawl form — configure and launch a new crawl job (seeds, mode, all tuning parameters). |
+| `POST /crawl/new` | Processes the form, starts the job in a background thread, and redirects to the job status page. |
+| `GET /crawl/<job_id>` | Job Status page — live status, logs, and controls (pause/resume/stop). |
+| `GET /crawl/<job_id>/results` | Results Explorer — displays crawled results for a completed job. |
+
+### REST API Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/jobs` | `GET` | List all jobs with summary info. |
+| `/api/jobs` | `POST` | Create and start a new crawl job from JSON. Returns `{ "job_id": "..." }`. |
+| `/api/jobs/<job_id>` | `GET` | Detailed job info including log lines. |
+| `/api/jobs/<job_id>/logs` | `GET` | Live log output, current status, and pause state. |
+| `/api/jobs/<job_id>/pause` | `POST` | Pause or resume a running job (toggles SIGSTOP/SIGCONT on Unix). |
+| `/api/jobs/<job_id>/stop` | `POST` | Stop a running or paused job (SIGTERM, falls back to SIGKILL). |
+| `/api/jobs/<job_id>/results` | `GET` | Get crawl results as normalized JSON. |
+| `/api/jobs/<job_id>/download/<filetype>` | `GET` | Download output files: `jsonl` (crawl data), `csv` (comparison CSV), or `json` (comparison JSON). |
+
+### Key Architecture Notes
+
+- **Background execution**: Each job runs `quantum-decision-crawler4.py` as a subprocess in a daemon thread, capturing stdout/stderr into an in-memory log buffer.
+- **Job lifecycle**: `pending` → `running` → `completed` / `failed` / `stopped`. Jobs can also be `paused`.
+- **Thread-safe state**: All job state is stored in an in-memory `jobs` dict protected by a `threading.Lock`.
+- **Per-job output directory**: Each job gets a unique directory under `crawl_outputs/` for its output files.
+
+### Starting the Flask App
+
+Install the web dependencies and run the app:
+
+```bash
+uv pip install -r requirements-web.txt
+uv run app.py
+```
+
+Then open `http://localhost:5000` in your browser.
 
 ---
 
