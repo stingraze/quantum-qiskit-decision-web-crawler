@@ -69,6 +69,25 @@ uv run quantum-decision-crawler5.py \
   --compare-algorithms --compare-duration 180 \
   --compare-csv comparison.csv --compare-json comparison.json \
   --total-timeout 12 --force-curl
+  
+# Comparison mode (combined)
+uv run quantum-decision-crawler5.py \
+  --seeds seeds.txt \
+  --max-pages 500 \
+  --max-depth 3 \
+  --quantum-weight 0.35 \
+  --heuristic-weight 0.20 \
+  --exploration-weight 0.15 \
+  --relevance-keywords "research,paper,dataset" \
+  --relevance-weight 0.30 \
+  --annealing-schedule exponential \
+  --annealing-initial-temp 0.7 \
+  --compare-algorithms \
+  --compare-duration 500 \
+  --compare-csv comparison.csv \
+  --compare-json comparison.json \
+  --force-curl \
+  --total-timeout 12
 """
 
 import csv
