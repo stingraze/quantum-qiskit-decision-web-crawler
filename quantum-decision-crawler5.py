@@ -1065,6 +1065,12 @@ class QuantumCrawler:
             return item, 0, 0
 
         url = item.url
+        logger.info(
+            "[PROCESSING] mode=%s depth=%d url=%s",
+            self.algorithm,
+            item.depth,
+            url,
+        )
         if item.depth > self.max_depth:
             return item, 0, 0
         if not self._allowed_by_regex(url):
@@ -1623,6 +1629,7 @@ class HybridQuantumCrawler(QuantumCrawler):
             return item, 0, 0
 
         url = item.url
+        logger.info("[PROCESSING] mode=quantum depth=%d url=%s", item.depth, url)
         if item.depth > self.max_depth:
             return item, 0, 0
         if not self._allowed_by_regex(url):
@@ -2029,6 +2036,7 @@ class AdaptiveQuantumCrawler(HybridQuantumCrawler):
             return item, 0, 0
 
         url = item.url
+        logger.info("[PROCESSING] mode=hybrid depth=%d url=%s", item.depth, url)
         if item.depth > self.max_depth:
             return item, 0, 0
         if not self._allowed_by_regex(url):
@@ -2231,6 +2239,7 @@ class _SingleThreadComparableCrawler(QuantumCrawler):
             return item, 0, 0
 
         url = item.url
+        logger.info("[PROCESSING] mode=adaptive depth=%d url=%s", item.depth, url)
         if item.depth > self.max_depth:
             return item, 0, 0
         if not self._allowed_by_regex(url):
