@@ -340,13 +340,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--timeout", type=float, default=8.0)
     ap.add_argument("--out-json", type=str, default="crawler6_output.json")
     ap.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
-    ap.add_argument("--verbose", action="store_true", help="Alias for --debug")
-    args, unknown = ap.parse_known_args()
-    if unknown:
-        logger.warning("Ignoring unrecognized arguments: %s", " ".join(unknown))
-    if args.verbose:
-        args.debug = True
-    return args
+    return ap.parse_args()
 
 
 def main() -> None:
