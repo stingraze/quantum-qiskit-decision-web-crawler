@@ -60,9 +60,11 @@ class WebGraphCrawler:
         q = deque((self._norm(s), 0) for s in seeds if s.strip())
         seen: Set[str] = set()
         pages: Dict[str, Page] = {}
+        logger.debug("[crawl] start seeds=%d max_pages=%d max_depth=%d", len(seeds), max_pages, max_depth)
 
         while q and len(pages) < max_pages:
             url, depth = q.popleft()
+            logger.debug("[crawl] pop depth=%d queue=%d seen=%d url=%s", depth, len(q), len(seen), url)
             if url in seen or depth > max_depth:
                 continue
             seen.add(url)
@@ -73,10 +75,12 @@ class WebGraphCrawler:
 
             title, links = self._extract(url, html)
             pages[url] = Page(url=url, title=title, depth=depth, links=links)
+            logger.debug("[crawl] accepted url=%s title_len=%d links=%d pages=%d", url, len(title), len(links), len(pages))
             for nxt in links:
                 if nxt not in seen and len(pages) + len(q) < max_pages * 3:
                     q.append((nxt, depth + 1))
 
+        logger.debug("[crawl] completed pages=%d seen=%d", len(pages), len(seen))
         return pages
 
     def _fetch(self, url: str) -> Optional[str]:
@@ -142,6 +146,7 @@ class LightweightURLRanker:
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         if X.size == 0:
+            logger.debug("[ranker] empty training matrix")
             return
         if MLX_AVAILABLE:
             try:
@@ -158,6 +163,7 @@ class LightweightURLRanker:
             grad_b = float(np.mean(p - y))
             self.w -= self.lr * grad_w
             self.b -= self.lr * grad_b
+        logger.debug("[ranker] numpy fit complete epochs=%d samples=%d", self.epochs, len(X))
 
     def _fit_mlx(self, X: np.ndarray, y: np.ndarray) -> None:
         X_m = mx.array(X.astype(np.float32))
@@ -176,6 +182,7 @@ class LightweightURLRanker:
             loss, grads = loss_and_grad(model, X_m, y_m)
             model.update({k: v - self.lr * grads[k] for k, v in model.parameters().items()})
             mx.eval(loss)
+        logger.debug("[ranker] mlx fit complete epochs=%d samples=%d", self.epochs, len(X))
 
         self.w = np.asarray(model.weight).reshape(-1).astype(np.float32)
         self.b = float(np.asarray(model.bias).reshape(-1)[0])
@@ -195,12 +202,15 @@ class QuantumHopSimulator:
             return []
         path = [start_url]
         cur = start_url
+        logger.debug("[sim] start=%s steps=%d", start_url, steps)
         for _ in range(steps):
             nbrs = adjacency.get(cur, [])
             if not nbrs:
+                logger.debug("[sim] dead-end at=%s", cur)
                 break
             cur = self._quantum_pick(cur, nbrs, score)
             path.append(cur)
+            logger.debug("[sim] hop -> %s", cur)
         return path
 
     def _quantum_pick(self, cur: str, nbrs: List[str], score: Dict[str, float]) -> str:
@@ -329,11 +339,15 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--sim-steps", type=int, default=20)
     ap.add_argument("--timeout", type=float, default=8.0)
     ap.add_argument("--out-json", type=str, default="crawler6_output.json")
+    ap.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     return ap.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("[main] debug logging enabled")
     with open(args.seeds, "r", encoding="utf-8") as f:
         seeds = [line.strip() for line in f if line.strip()]
 
@@ -342,6 +356,7 @@ def main() -> None:
     graph = build_graph(pages)
 
     X, y, ordered = build_training_matrix(pages, graph)
+    logger.debug("[main] matrix rows=%d cols=%d", X.shape[0], X.shape[1] if X.ndim == 2 else 0)
     ranker = LightweightURLRanker()
     ranker.fit(X, y)
 
@@ -366,6 +381,7 @@ def main() -> None:
     with open(args.out_json, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
+    logger.debug("[main] next_n_count=%d sim_path_len=%d", len(next_n), len(simulated_path))
     logger.info("Crawled %d pages. MLX used=%s. Wrote %s", len(pages), ranker.mlx_used, args.out_json)
 
 
