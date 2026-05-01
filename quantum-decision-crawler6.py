@@ -370,6 +370,7 @@ def main() -> None:
     result = {
         "pages_crawled": len(pages),
         "mlx_used": ranker.mlx_used,
+        "graph": graph,  # <-- Added this line
         "next_n": [{"url": u, "score": round(float(s), 6)} for u, s in next_n],
         "simulation": {
             "start_url": start,
