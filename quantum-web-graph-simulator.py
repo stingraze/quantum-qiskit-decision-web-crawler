@@ -29,8 +29,8 @@ def load_graph_json(path: str) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Supports crawler6 output format + direct graph dumps + page-record exports.
-    graph = data.get("graph") or data.get("adjacency") or _graph_from_records(data)
+    # Supports crawler6 output format + direct graph dumps.
+    graph = data.get("graph") or data.get("adjacency") or {}
     if not graph:
         raise ValueError("Input JSON missing graph/adjacency object.")
 
@@ -38,50 +38,7 @@ def load_graph_json(path: str) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
     for row in data.get("next_n", []):
         if isinstance(row, dict) and "url" in row and "score" in row:
             score_map[row["url"]] = float(row["score"])
-    # Optional score map in dict form.
-    if isinstance(data.get("scores"), dict):
-        for k, v in data["scores"].items():
-            try:
-                score_map[str(k)] = float(v)
-            except Exception:
-                continue
     return graph, score_map
-
-
-def _graph_from_records(data: dict) -> Dict[str, List[str]]:
-    """Best-effort graph extraction from common crawl export shapes."""
-    graph: Dict[str, List[str]] = {}
-
-    # Case 1: pages is a dict: {url: {links:[...]}}
-    pages = data.get("pages")
-    if isinstance(pages, dict):
-        for url, rec in pages.items():
-            links = rec.get("links", []) if isinstance(rec, dict) else []
-            if isinstance(links, list):
-                graph[str(url)] = [str(x) for x in links if isinstance(x, str)]
-        if graph:
-            return graph
-
-    # Case 2: list-shaped exports under common keys.
-    for key in ("pages", "crawled_pages", "records", "nodes"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
-            continue
-        for rec in rows:
-            if not isinstance(rec, dict):
-                continue
-            src = rec.get("url") or rec.get("source") or rec.get("node")
-            if not isinstance(src, str) or not src:
-                continue
-            links = rec.get("links") or rec.get("out_links") or rec.get("neighbors") or []
-            if isinstance(links, list):
-                graph[src] = [str(x) for x in links if isinstance(x, str)]
-            else:
-                graph[src] = []
-        if graph:
-            return graph
-
-    return graph
 
 
 def build_edge_dataset(graph: Dict[str, List[str]], score_map: Dict[str, float]) -> Tuple[np.ndarray, np.ndarray]:

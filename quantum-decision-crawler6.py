@@ -340,13 +340,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--timeout", type=float, default=8.0)
     ap.add_argument("--out-json", type=str, default="crawler6_output.json")
     ap.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
-    ap.add_argument("--verbose", action="store_true", help="Alias for --debug")
-    args, unknown = ap.parse_known_args()
-    if unknown:
-        logger.warning("Ignoring unrecognized arguments: %s", " ".join(unknown))
-    if args.verbose:
-        args.debug = True
-    return args
+    return ap.parse_args()
 
 
 def main() -> None:
@@ -377,7 +371,6 @@ def main() -> None:
         "pages_crawled": len(pages),
         "mlx_used": ranker.mlx_used,
         "next_n": [{"url": u, "score": round(float(s), 6)} for u, s in next_n],
-        "graph": graph,
         "simulation": {
             "start_url": start,
             "steps": args.sim_steps,
