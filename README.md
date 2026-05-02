@@ -9,7 +9,7 @@ quantum-decision-crawler1.py - Video on YouTube
 This project uses Qiskit. Qiskit is a registered trademark of IBM. 
 This repository is independent and not affiliated with or endorsed by IBM.
 
-Update 5/1/2026:
+Update 5/2/2026:
 
 quantum-decision-web-crawler6.py and quantum-graph-simulator.py checked to work. (as of 8:55PM)
 
