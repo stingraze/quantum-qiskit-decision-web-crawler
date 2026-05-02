@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Quantum web crawler simulator from crawler JSON output.
+"""
+(C)Tsubasa Kato - Inspire Search Corp. 2026/5/2
+Created with help from Chat GPT, Gemini and Codex.
+
+Quantum web crawler simulator from crawler JSON output.
 
 Modes:
 - train: trains a lightweight transition model from crawled graph JSON
