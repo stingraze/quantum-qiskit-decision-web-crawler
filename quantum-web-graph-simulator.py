@@ -8,6 +8,8 @@ Quantum web crawler simulator from crawler JSON output.
 Modes:
 - train: trains a lightweight transition model from crawled graph JSON
 - infer: loads trained model and simulates quantum-biased web hops
+
+Need to improve: sites may cycle through same sites. Need to fix.
 """
 
 from __future__ import annotations
