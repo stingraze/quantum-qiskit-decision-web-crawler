@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+(C)Tsubasa Kato - Inspire Search Corp. 2026/5/2
+Created with help from Chat GPT, Gemini and Codex.
 Quantum Decision Crawler v6 (lightweight MLX + quantum hop simulator)
 
 - Trains a tiny model (MLX on Apple GPU when available; NumPy fallback elsewhere)
