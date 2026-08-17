@@ -1,3 +1,5 @@
+(C)Tsubasa Kato - Inspire Search Corp - 2026/8/17 - Created with Perplexity Pro.
+
 The "least effort / most effort" duality in information seeking maps cleanly onto a hybrid quantum-classical web crawler: you spend *least effort* on broad discovery and filtering using classical techniques, then concentrate *most effort* on the hardest combinatorial search subproblems using quantum search. The quantum search literature already formalizes this trade-off — Grover's partial search lets you literally dial effort up or down as an accuracy-query tradeoff, and nested Grover applies this to tree-structured search spaces, which is exactly what the web link graph is. [arxiv](https://arxiv.org/abs/2603.01462)
 
 ## The Principle of Least Effort and Its Complement
